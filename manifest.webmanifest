@@ -1,0 +1,14 @@
+{
+  "name": "漢字のよるめいろ",
+  "short_name": "よるめいろ",
+  "description": "漢字の形をした夜の迷路を歩いて、どの漢字かを当てる学習ゲーム",
+  "display": "standalone",
+  "orientation": "any",
+  "start_url": ".",
+  "background_color": "#071127",
+  "theme_color": "#081127",
+  "icons": [
+    { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" }
+  ]
+}

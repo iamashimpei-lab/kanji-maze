@@ -1,0 +1,11 @@
+.env
+credentials*.json
+*.key
+*.pem
+tokens/
+node_modules/
+.DS_Store
+
+# KanjiVG raw data (build-time only, fetched locally)
+vendor/kanjivg-main.zip
+vendor/kanjivg-extract/

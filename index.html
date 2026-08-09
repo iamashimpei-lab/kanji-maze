@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="ja">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+    <meta name="theme-color" content="#081127">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta name="apple-mobile-web-app-title" content="よるめいろ">
+    <title>漢字のよるめいろ</title>
+    <link rel="manifest" href="manifest.webmanifest">
+    <link rel="apple-touch-icon" href="icons/icon-180.png">
+    <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png">
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main id="app">
+      <section id="start-screen" class="screen paper-screen">
+        <div class="start-card">
+          <p class="eyebrow">よるの たんけん</p>
+          <h1>漢字のよるめいろ</h1>
+          <p class="lead">みちの かたちを そうぞうして、かんじを あてよう。</p>
+
+          <fieldset>
+            <legend>がくねん</legend>
+            <div class="choice-row grade-row">
+              <label><input type="radio" name="grade" checked><span>1ねんせい</span></label>
+              <span class="disabled-choice">2ねんせい<br><small>じゅんびちゅう</small></span>
+              <span class="disabled-choice">3〜6ねん<br><small>じゅんびちゅう</small></span>
+            </div>
+          </fieldset>
+
+          <fieldset>
+            <legend>いつまで</legend>
+            <div class="choice-row">
+              <label><input type="radio" name="month" checked><span>ぜんぶ</span></label>
+            </div>
+          </fieldset>
+
+          <div class="setting-columns">
+            <fieldset>
+              <legend>ちず</legend>
+              <div class="choice-row">
+                <label><input type="radio" name="map" value="on" checked><span>あり</span></label>
+                <label><input type="radio" name="map" value="off"><span>なし<br><small>とくてんアップ</small></span></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>ほっきょくせい</legend>
+              <div class="choice-row">
+                <label><input type="radio" name="north-star" value="on" checked><span>あり</span></label>
+                <label><input type="radio" name="north-star" value="off"><span>なし</span></label>
+              </div>
+            </fieldset>
+          </div>
+          <button id="start-button" class="primary-button">スタート</button>
+          <p class="start-help">パソコンは WASD・やじるしキーで あるき、マウスで みまわします。</p>
+        </div>
+      </section>
+
+      <section id="game-screen" class="screen hidden" aria-label="めいろ">
+        <div id="viewport"></div>
+        <div id="hud">
+          <div class="status-pill">
+            <span>まちがい <strong id="wrong-count">0</strong>かい</span>
+            <span>いま <strong id="score-display">1200</strong>てん</span>
+          </div>
+          <canvas id="minimap" width="180" height="180" aria-label="あるいた道の地図"></canvas>
+          <button id="answer-button" class="answer-button">こたえる</button>
+          <div id="touch-stick" aria-hidden="true"><div id="touch-knob"></div></div>
+          <p id="notice" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="answer-panel" class="overlay hidden" aria-modal="true" role="dialog" aria-labelledby="answer-title">
+        <div class="answer-card">
+          <button id="close-answer" class="close-button" aria-label="とじる">とじる</button>
+          <p class="eyebrow">どの かんじかな？</p>
+          <h2 id="answer-title">こたえを えらぼう</h2>
+          <div id="answer-choices" class="answer-grid"></div>
+          <p id="answer-feedback" class="answer-feedback" aria-live="assertive"></p>
+        </div>
+      </section>
+
+      <section id="result-panel" class="overlay result-overlay hidden" aria-modal="true" role="dialog" aria-labelledby="result-title">
+        <div class="result-card">
+          <p class="eyebrow">せいかい</p>
+          <div id="result-char" class="result-char"></div>
+          <h2 id="result-title"></h2>
+          <p id="result-meaning" class="result-meaning"></p>
+          <div class="score-card">
+            <h3>とくてん</h3>
+            <dl>
+              <div><dt>あるいた みち</dt><dd id="result-rate"></dd></div>
+              <div><dt>ふみはりつボーナス</dt><dd id="result-base"></dd></div>
+              <div><dt>まちがい</dt><dd id="result-penalty"></dd></div>
+              <div><dt>ちずなし</dt><dd id="result-multiplier"></dd></div>
+              <div class="total-row"><dt>ごうけい</dt><dd id="result-total"></dd></div>
+            </dl>
+          </div>
+          <button id="next-button" class="primary-button">つぎの かんじ</button>
+        </div>
+      </section>
+    </main>
+    <script type="module" src="src/main.js"></script>
+  </body>
+</html>
