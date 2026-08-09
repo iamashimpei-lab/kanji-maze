@@ -1,5 +1,7 @@
 import { getKanjiPool } from "./kanji-data.js";
+import { selectAnswerChoices } from "./answers.js";
 import { canStandAt, explorationRate, generateMaze, markVisitedSamples, rotateStrokes } from "./maze.js";
+import { villageAdditionForTheme } from "./progress.js";
 import { calculateScore, getScoreBreakdown } from "./score.js";
 import { Controls } from "./controls.js";
 import { MazeRenderer } from "./render3d.js";
@@ -116,8 +118,8 @@ function openAnswers() {
   if (playState !== "playing") return;
   playState = "answering";
   controls.enabled = false;
-  const others = shuffle(questionPool.filter((kanji) => kanji.char !== currentKanji.char)).slice(0, 3);
-  ui.showAnswers(shuffle([currentKanji, ...others]), chooseAnswer);
+  const choices = settings.answerMode === "choice" ? selectAnswerChoices(currentKanji, questionPool) : [];
+  ui.showAnswers(settings.answerMode, choices, chooseAnswer);
 }
 
 function closeAnswers() {
@@ -138,12 +140,16 @@ function chooseAnswer(choice) {
     return;
   }
   const breakdown = scoreBreakdown();
+  const collection = ui.recordCorrect(currentKanji);
   ui.closeAnswers();
   playState = "revealing";
   controls.enabled = false;
   view.startReveal(visited, () => {
     playState = "result";
-    ui.showResult(currentKanji, breakdown);
+    ui.showResult(currentKanji, breakdown, {
+      isNew: collection.isNew,
+      villageAddition: collection.isNew ? villageAdditionForTheme(currentKanji.theme) : null,
+    });
   });
 }
 
@@ -154,11 +160,11 @@ function nextKanji() {
 }
 
 function scoreBreakdown() {
-  return getScoreBreakdown({ explorationRate: explorationRate(maze, visited), wrongAnswers, mapEnabled: settings.mapEnabled });
+  return getScoreBreakdown({ explorationRate: explorationRate(maze, visited), wrongAnswers, mapEnabled: settings.mapEnabled, answerMode: settings.answerMode });
 }
 
 function currentScore() {
-  return calculateScore({ explorationRate: explorationRate(maze, visited), wrongAnswers, mapEnabled: settings.mapEnabled });
+  return calculateScore({ explorationRate: explorationRate(maze, visited), wrongAnswers, mapEnabled: settings.mapEnabled, answerMode: settings.answerMode });
 }
 
 function frame(now) {
@@ -208,13 +214,4 @@ function updatePlayer(delta) {
 function approachAngle(current, target, maxStep) {
   const difference = Math.atan2(Math.sin(target - current), Math.cos(target - current));
   return current + Math.max(-maxStep, Math.min(maxStep, difference));
-}
-
-function shuffle(items) {
-  const copy = [...items];
-  for (let i = copy.length - 1; i > 0; i -= 1) {
-    const j = Math.floor(Math.random() * (i + 1));
-    [copy[i], copy[j]] = [copy[j], copy[i]];
-  }
-  return copy;
 }

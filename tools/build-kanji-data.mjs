@@ -266,6 +266,14 @@ function build() {
   const tunedMeaningChars = data
     .filter((entry) => !Object.hasOwn(READINGS, entry.char) && entry.meaning !== normalizeReading(entry.reading))
     .map((entry) => entry.char);
+  const themeCounts = Object.fromEntries(THEME_CATEGORIES.map((theme) => [
+    theme,
+    data.filter((entry) => entry.theme === theme).length,
+  ]));
+  const emptyThemes = THEME_CATEGORIES.filter((theme) => themeCounts[theme] < 1);
+  const neutralRate = themeCounts.neutral / data.length;
+  if (emptyThemes.length) throw new Error(`空のテーマがあります: ${emptyThemes.join(",")}`);
+  if (neutralRate > 0.35) throw new Error(`neutral が35%を超えています: ${(neutralRate * 100).toFixed(2)}%`);
   const header = "// tools/build-kanji-data.mjs により生成。直接編集しないでください。\n";
   fs.writeFileSync(outputPath, `${header}export const KANJI_DATA = ${JSON.stringify(data)};\n`);
   const strokeCount = data.reduce((sum, kanji) => sum + kanji.strokes.length, 0);
@@ -282,6 +290,7 @@ function build() {
   console.log(`PASS endings: total=${strokeCount}, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
   console.log(`INFO unknown kvg:type: ${[...unknownTypes].sort().join(", ") || "none"}`);
   console.log(`PASS themes: ${data.length} kanji, categories=${THEME_CATEGORIES.join(",")}`);
+  console.log(`PASS theme distribution: ${THEME_CATEGORIES.map((theme) => `${theme}=${themeCounts[theme]}`).join(", ")}; neutral=${(neutralRate * 100).toFixed(2)}%<=35%`);
   console.log("PASS sampling: 16..28 points/stroke, coordinates=0..1");
   console.log(`PASS output size: ${fileSize} bytes`);
   console.log(`WROTE ${path.relative(projectRoot, outputPath)}`);

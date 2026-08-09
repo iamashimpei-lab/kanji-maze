@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { selectAnswerChoices } from "../src/answers.js";
 import { GRADE_MONTHS, KANJI_DATA, getKanjiPool } from "../src/kanji-data.js";
 import {
   BRIDGE_RADIUS,
@@ -21,8 +22,9 @@ import {
   strokePointAtDistanceFromEnd,
   worldSizeForStrokeCount,
 } from "../src/maze.js";
-import { calculateScore } from "../src/score.js";
-import { computeWallContours, createWallGeometry } from "../src/render3d.js";
+import { createVillageLayout, normalizeSolvedRecords, recordSolved, summarizeSolved } from "../src/progress.js";
+import { calculateScore, getScoreBreakdown } from "../src/score.js";
+import { THEME_STYLE, computeWallContours, createWallGeometry } from "../src/render3d.js";
 import { classifyStrokeEnding } from "../tools/kanji-endings.mjs";
 import { KANJI_THEMES, THEME_CATEGORIES, resolveKanjiTheme } from "../tools/kanji-themes.mjs";
 
@@ -102,6 +104,65 @@ for (const kanji of KANJI_DATA) {
   assert.equal(kanji.theme, resolveKanjiTheme(kanji.char), `${kanji.char}: 生成テーマがテーマ表と違う`);
 }
 console.log(`PASS themes: 1026 assigned; categories=${THEME_CATEGORIES.join(",")}; undefined=>neutral`);
+const themeCounts = Object.fromEntries(THEME_CATEGORIES.map((theme) => [theme, KANJI_DATA.filter((kanji) => kanji.theme === theme).length]));
+assert.ok(THEME_CATEGORIES.every((theme) => themeCounts[theme] > 0), "空のテーマがある");
+assert.ok(themeCounts.neutral / KANJI_DATA.length <= 0.35, "neutral が35%を超える");
+assert.deepEqual(new Set(Object.keys(THEME_STYLE)), new Set(THEME_CATEGORIES), "THEME_STYLE が9テーマを網羅しない");
+assert.ok(Object.values(THEME_STYLE).every((style) => [style.floor, style.wall, style.background, style.fog].every(Number.isInteger)), "テーマ配色の床・壁・背景・霧がそろっていない");
+console.log(`PASS theme distribution: ${THEME_CATEGORIES.map((theme) => `${theme}=${themeCounts[theme]}`).join(", ")}; neutral=${(themeCounts.neutral / KANJI_DATA.length * 100).toFixed(2)}%`);
+
+const answerCorrect = { char: "海", theme: "water" };
+const enoughSameTheme = [
+  answerCorrect,
+  { char: "池", theme: "water" },
+  { char: "湖", theme: "water" },
+  { char: "川", theme: "water" },
+  { char: "森", theme: "plant" },
+];
+const themedChoices = selectAnswerChoices(answerCorrect, enoughSameTheme, () => 0.37);
+assert.equal(themedChoices.length, 4, "4択が4字でない");
+assert.equal(new Set(themedChoices.map((choice) => choice.char)).size, 4, "4択に重複がある");
+assert.ok(themedChoices.every((choice) => choice.theme === "water"), "同テーマが十分なのに他テーマが混ざる");
+const shortSameTheme = selectAnswerChoices(answerCorrect, [
+  answerCorrect,
+  { char: "池", theme: "water" },
+  { char: "池", theme: "water" },
+  { char: "森", theme: "plant" },
+  { char: "山", theme: "mountain" },
+  { char: "火", theme: "fire" },
+], () => 0.61);
+assert.equal(shortSameTheme.length, 4, "不足時に4字へ補充されない");
+assert.equal(new Set(shortSameTheme.map((choice) => choice.char)).size, 4, "不足時の補充に重複がある");
+assert.ok(shortSameTheme.some((choice) => choice.char === "池"), "存在する同テーマ候補が優先されない");
+assert.equal(shortSameTheme.filter((choice) => choice.theme !== "water").length, 2, "同テーマ不足分だけ他テーマで補っていない");
+console.log("PASS answer choices: same-theme priority, fallback fill, 4 unique chars");
+
+const firstTime = "2026-08-10T01:02:03.000Z";
+const secondTime = "2026-08-11T04:05:06.000Z";
+const initialRecords = {};
+const firstRecord = recordSolved(initialRecords, "森", firstTime);
+assert.deepEqual(initialRecords, {}, "recordSolved が入力を破壊した");
+assert.equal(firstRecord.isNew, true, "初回正解が新規扱いでない");
+assert.deepEqual(firstRecord.record, { char: "森", count: 1, firstSolvedAt: firstTime }, "初回正解記録が不正");
+const repeatedRecord = recordSolved(firstRecord.records, "森", secondTime);
+assert.equal(repeatedRecord.isNew, false, "再正解が新規扱いになった");
+assert.equal(repeatedRecord.record.count, 2, "正解回数が増えない");
+assert.equal(repeatedRecord.record.firstSolvedAt, firstTime, "初回正解日時が上書きされた");
+assert.deepEqual(normalizeSolvedRecords({ 海: 3 }), { 海: { char: "海", count: 3, firstSolvedAt: null } }, "旧 count 数値形式を移行できない");
+const progressRecords = recordSolved(repeatedRecord.records, "海", firstTime).records;
+const progressSummary = summarizeSolved(progressRecords, KANJI_DATA);
+assert.deepEqual({ total: progressSummary.total, attempts: progressSummary.attempts }, { total: 2, attempts: 3 }, "正解集計が不正");
+const equivalentRecords = {
+  海: { char: "海", count: 99, firstSolvedAt: secondTime },
+  森: { char: "森", count: 7, firstSolvedAt: secondTime },
+};
+const layout = createVillageLayout(progressRecords, KANJI_DATA);
+const equivalentLayout = createVillageLayout(equivalentRecords, KANJI_DATA);
+assert.deepEqual(layout, equivalentLayout, "同じ解答集合で村の配置が変わる");
+assert.equal(layout.length, 2, "解いた字1つにつき村要素1つにならない");
+assert.ok(layout.every((item) => item.char && item.kind && Number.isFinite(item.x) && Number.isFinite(item.y)), "村要素に由来字・種類・位置がない");
+console.log("PASS collection: record/increment/migration/summary; one element per solved char");
+console.log("PASS village layout: deterministic for the same solved-char set");
 
 const rotatedSample = KANJI_DATA.find((kanji) => kanji.char === "川");
 assert.ok(rotatedSample, "回転検査用の川が見つからない");
@@ -231,8 +292,14 @@ for (let percent = 0; percent <= 100; percent += 1) {
 }
 assert.ok(calculateScore(0.3, 1, true) < calculateScore(0.3, 0, true), "誤答ペナルティがない");
 assert.ok(calculateScore(0.3, 0, false) > calculateScore(0.3, 0, true), "地図なし倍率がない");
+const choiceBreakdown = getScoreBreakdown({ explorationRate: 0.3, wrongAnswers: 0, mapEnabled: true, answerMode: "choice" });
+const inputBreakdown = getScoreBreakdown({ explorationRate: 0.3, wrongAnswers: 0, mapEnabled: true, answerMode: "input" });
+const combinedBreakdown = getScoreBreakdown({ explorationRate: 0.3, wrongAnswers: 0, mapEnabled: false, answerMode: "input" });
+assert.equal(inputBreakdown.inputMultiplier, 1.5, "入力モード倍率が1.5でない");
+assert.equal(inputBreakdown.total, Math.round(choiceBreakdown.total * 1.5), "入力モード得点が1.5倍でない");
+assert.equal(combinedBreakdown.multiplier, 2.25, "地図なしと入力モードの倍率が乗算されない");
 assert.equal(calculateScore(1, 99, true), 0, "得点の下限が0でない");
-console.log("PASS score: monotonic, penalty, no-map multiplier, floor");
+console.log("PASS score: monotonic, penalty, no-map x1.5, input x1.5, combined x2.25, floor");
 console.log("ALL TESTS PASSED");
 
 function signedArea2d(points) {

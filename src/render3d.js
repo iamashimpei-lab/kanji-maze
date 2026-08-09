@@ -10,14 +10,16 @@ const EYE_HEIGHT = 1.5;
 const WALL_MARGIN = 4;
 const INK_WIDTH = 1.45;
 const NEUTRAL_BACKGROUND = 0x071127;
-const THEME_STYLE = Object.freeze({
-  neutral: { floor: 0x887d65, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
-  water: { floor: 0x74817a, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
-  mountain: { floor: 0x887d65, wall: 0x665f59, background: NEUTRAL_BACKGROUND },
-  plant: { floor: 0x7d8067, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
-  fire: { floor: 0x887d65, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
-  sky: { floor: 0x887d65, wall: 0x46607a, background: 0x09152f },
-  life: { floor: 0x8b7b68, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+export const THEME_STYLE = Object.freeze({
+  neutral: { floor: 0x887d65, wall: 0x46607a, background: 0x071127, fog: 0x101c31 },
+  water: { floor: 0x647e7c, wall: 0x365f72, background: 0x06182a, fog: 0x16384a },
+  mountain: { floor: 0x837b6c, wall: 0x625e5b, background: 0x111827, fog: 0x32333a },
+  plant: { floor: 0x68785e, wall: 0x3d655f, background: 0x071b22, fog: 0x213b35 },
+  fire: { floor: 0x82695b, wall: 0x704c4a, background: 0x1b101a, fog: 0x43262a },
+  sky: { floor: 0x73788a, wall: 0x485979, background: 0x050d25, fog: 0x18274a },
+  animal: { floor: 0x756d58, wall: 0x52685e, background: 0x0c1723, fog: 0x29383a },
+  life: { floor: 0x826c70, wall: 0x5f526e, background: 0x171225, fog: 0x372d48 },
+  town: { floor: 0x77736c, wall: 0x4c5d72, background: 0x0b1425, fog: 0x263449 },
 });
 
 export class MazeRenderer {
@@ -42,6 +44,7 @@ export class MazeRenderer {
     window.addEventListener("resize", this.resize);
     this.resize();
     this.revealAnimation = null;
+    this.themeEffects = [];
   }
 
   makeStars() {
@@ -84,6 +87,7 @@ export class MazeRenderer {
     this.wallMesh = null;
     this.floorMesh = null;
     this.themeGroup = null;
+    this.themeEffects = [];
     this.revealAnimation = null;
   }
 
@@ -92,7 +96,7 @@ export class MazeRenderer {
     this.maze = maze;
     const themeStyle = THEME_STYLE[maze.theme] ?? THEME_STYLE.neutral;
     this.scene.background.setHex(themeStyle.background);
-    this.scene.fog.color.setHex(themeStyle.background);
+    this.scene.fog.color.setHex(themeStyle.fog);
     // 種明かし中に広げた霧を通常値へ戻す。
     this.scene.fog.near = 25;
     this.scene.fog.far = 105;
@@ -184,6 +188,7 @@ export class MazeRenderer {
       );
       addGrassInstances(grass, this.maze, tuftCount, random);
       this.themeGroup.add(grass);
+      this.addNightPoints("fireflies", 14, 0xc9e889, random);
     }
     if (theme === "fire") {
       const anchors = themeSamples(this.maze, 2);
@@ -199,10 +204,12 @@ export class MazeRenderer {
         spot.position.set(sample.x, floorHeightAt(this.maze, sample.x, sample.z) + 0.02, sample.z);
         this.themeGroup.add(spot);
       }
+      this.addNightPoints("embers", 12, 0xff9a56, random);
     }
     if (theme === "sky") {
       const positions = [];
-      for (let index = 0; index < 28; index += 1) {
+      // 通常の星 115 点に同数を足し、空テーマだけ星の密度を倍にする。
+      for (let index = 0; index < 115; index += 1) {
         const angle = random() * Math.PI * 2;
         const radius = 76 + random() * 34;
         positions.push(Math.cos(angle) * radius, 22 + random() * 54, Math.sin(angle) * radius);
@@ -210,7 +217,24 @@ export class MazeRenderer {
       const geometry = new THREE.BufferGeometry();
       geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
       this.themeGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xd8e1ff, size: 0.27 })));
+      const shootingGeometry = new THREE.BufferGeometry();
+      shootingGeometry.setAttribute("position", new THREE.Float32BufferAttribute([-55, 38, -65], 3));
+      const shootingStar = new THREE.Points(shootingGeometry, new THREE.PointsMaterial({ color: 0xfff4cb, size: 0.7, transparent: true, opacity: 0.75 }));
+      this.themeGroup.add(shootingStar);
+      this.themeEffects.push({ type: "shooting-star", points: shootingStar });
     }
+  }
+
+  addNightPoints(type, count, color, random) {
+    const positions = [];
+    for (const sample of themeSamples(this.maze, count)) {
+      positions.push(sample.x + (random() - 0.5) * 1.5, 0.75 + random() * 1.25, sample.z + (random() - 0.5) * 1.5);
+    }
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+    const points = new THREE.Points(geometry, new THREE.PointsMaterial({ color, size: type === "embers" ? 0.25 : 0.2, transparent: true, opacity: 0.65, depthWrite: false }));
+    this.themeGroup.add(points);
+    this.themeEffects.push({ type, points, base: Float32Array.from(positions) });
   }
 
   addBridgeRails() {
@@ -272,7 +296,7 @@ export class MazeRenderer {
   startReveal(visited, onComplete) {
     if (this.themeGroup) this.themeGroup.visible = false;
     this.scene.background.setHex(NEUTRAL_BACKGROUND);
-    this.scene.fog.color.setHex(NEUTRAL_BACKGROUND);
+    this.scene.fog.color.setHex(THEME_STYLE.neutral.fog);
     this.floorMesh?.material.color.setHex(THEME_STYLE.neutral.floor);
     this.wallMesh?.material.color.setHex(THEME_STYLE.neutral.wall);
     this.addInk(visited);
@@ -306,7 +330,37 @@ export class MazeRenderer {
 
   render(now) {
     this.updateReveal(now);
+    this.updateThemeEffects(now);
     this.renderer.render(this.scene, this.camera);
+  }
+
+  updateThemeEffects(now) {
+    const seconds = now / 1000;
+    for (const effect of this.themeEffects) {
+      if (!effect.points.visible) continue;
+      if (effect.type === "shooting-star") {
+        const position = effect.points.geometry.attributes.position;
+        const cycle = (seconds * 0.055) % 1;
+        position.setXYZ(0, -55 + cycle * 110, 42 - cycle * 24, -65 + cycle * 34);
+        position.needsUpdate = true;
+        effect.points.material.opacity = cycle < 0.78 ? 0.75 : (1 - cycle) / 0.22 * 0.75;
+        continue;
+      }
+      const positions = effect.points.geometry.attributes.position;
+      for (let index = 0; index < positions.count; index += 1) {
+        const offset = index * 3;
+        if (effect.type === "fireflies") {
+          positions.setX(index, effect.base[offset] + Math.sin(seconds * 0.38 + index) * 0.24);
+          positions.setY(index, effect.base[offset + 1] + Math.cos(seconds * 0.31 + index * 1.7) * 0.16);
+        } else {
+          positions.setY(index, effect.base[offset + 1] + ((seconds * 0.22 + index * 0.13) % 1) * 0.8);
+        }
+      }
+      positions.needsUpdate = true;
+      effect.points.material.opacity = effect.type === "embers"
+        ? 0.45 + Math.sin(seconds * 7) * 0.14
+        : 0.55 + Math.sin(seconds * 1.3) * 0.1;
+    }
   }
 
   resize() {

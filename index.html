@@ -21,6 +21,10 @@
           <p class="eyebrow">よるの たんけん</p>
           <h1>漢字のよるめいろ</h1>
           <p class="lead">みちの かたちを そうぞうして、かんじを あてよう。</p>
+          <div class="collection-buttons" aria-label="あつめた もの">
+            <button id="village-button" type="button"><span aria-hidden="true" class="collection-mark village-mark"></span>じぶんの むら</button>
+            <button id="zukan-button" type="button"><span aria-hidden="true" class="collection-mark book-mark"></span>ずかん</button>
+          </div>
 
           <fieldset>
             <legend>がくねん</legend>
@@ -41,6 +45,13 @@
           </fieldset>
 
           <div class="setting-columns">
+            <fieldset>
+              <legend>こたえかた</legend>
+              <div class="choice-row">
+                <label><input type="radio" name="answer-mode" value="choice" checked><span>4たく</span></label>
+                <label><input type="radio" name="answer-mode" value="input"><span>じぶんで<br>にゅうりょく<small>とくてんアップ</small></span></label>
+              </div>
+            </fieldset>
             <fieldset>
               <legend>ちず</legend>
               <div class="choice-row">
@@ -118,6 +129,14 @@
           <p class="eyebrow">どの かんじかな？</p>
           <h2 id="answer-title">こたえを えらぼう</h2>
           <div id="answer-choices" class="answer-grid"></div>
+          <div id="answer-input-area" class="answer-input-area hidden">
+            <form id="answer-input-form">
+              <label for="answer-input">かんじ 1もじ</label>
+              <input id="answer-input" type="text" inputmode="text" enterkeyhint="done" autocomplete="off" autocapitalize="off" spellcheck="false">
+              <button class="primary-button" type="submit">こたえる</button>
+            </form>
+            <p>よみを うって、かんじに へんかんしてね</p>
+          </div>
           <p id="answer-feedback" class="answer-feedback" aria-live="assertive"></p>
         </div>
       </section>
@@ -128,17 +147,54 @@
           <div id="result-char" class="result-char"></div>
           <h2 id="result-title"></h2>
           <p id="result-meaning" class="result-meaning"></p>
+          <div class="collection-result" aria-live="polite">
+            <p id="collection-new" class="hidden">あたらしく ずかんに のったよ</p>
+            <p id="village-new" class="hidden"></p>
+          </div>
           <div class="score-card">
             <h3>とくてん</h3>
             <dl>
               <div><dt>あるいた みち</dt><dd id="result-rate"></dd></div>
               <div><dt>たんけんボーナス</dt><dd id="result-base"></dd></div>
               <div><dt>まちがい</dt><dd id="result-penalty"></dd></div>
-              <div><dt>ちずなし</dt><dd id="result-multiplier"></dd></div>
+              <div><dt>ちずなし</dt><dd id="result-map-multiplier"></dd></div>
+              <div id="result-input-row" class="hidden"><dt>じぶんで にゅうりょく</dt><dd id="result-input-multiplier"></dd></div>
               <div class="total-row"><dt>ごうけい</dt><dd id="result-total"></dd></div>
             </dl>
           </div>
           <button id="next-button" class="primary-button">つぎの かんじ</button>
+        </div>
+      </section>
+
+      <section id="zukan-overlay" class="overlay collection-overlay hidden" aria-modal="true" role="dialog" aria-labelledby="zukan-title">
+        <div class="collection-card zukan-panel">
+          <button id="close-zukan" class="close-button" type="button" aria-label="ずかんを とじる">とじる</button>
+          <p class="eyebrow">といた かんじが あつまる</p>
+          <h2 id="zukan-title">よるの ずかん</h2>
+          <div class="zukan-tabs" role="tablist" aria-label="がくねん">
+            <button type="button" data-zukan-grade="1">1ねん</button>
+            <button type="button" data-zukan-grade="2">2ねん</button>
+            <button type="button" data-zukan-grade="3">3ねん</button>
+            <button type="button" data-zukan-grade="4">4ねん</button>
+            <button type="button" data-zukan-grade="5">5ねん</button>
+            <button type="button" data-zukan-grade="6">6ねん</button>
+          </div>
+          <p id="zukan-progress" class="collection-progress"></p>
+          <div id="zukan-grid" class="zukan-grid"></div>
+        </div>
+      </section>
+
+      <section id="village-overlay" class="overlay collection-overlay village-overlay hidden" aria-modal="true" role="dialog" aria-labelledby="village-title">
+        <div class="collection-card village-panel">
+          <button id="close-village" class="close-button" type="button" aria-label="むらを とじる">とじる</button>
+          <div class="village-heading">
+            <div>
+              <p class="eyebrow">かんじから うまれた けしき</p>
+              <h2 id="village-title">じぶんの むら</h2>
+            </div>
+            <p id="village-progress" class="collection-progress"></p>
+          </div>
+          <canvas id="village-canvas" aria-label="あつめた漢字からできた夜の村"></canvas>
         </div>
       </section>
     </main>
