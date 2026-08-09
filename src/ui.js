@@ -36,13 +36,14 @@ export class GameUI {
     });
   }
 
-  bind({ onStart, onAnswerOpen, onAnswerClose, onNext, onGuideClose }) {
+  bind({ onStart, onAnswerOpen, onAnswerClose, onNext, onGuideClose, onMenu }) {
     byId("start-button").addEventListener("click", () => {
       const settings = this.settings();
       this.saveSettings(settings);
       onStart(settings);
     });
     byId("answer-button").addEventListener("click", onAnswerOpen);
+    byId("menu-button").addEventListener("click", onMenu);
     byId("close-answer").addEventListener("click", onAnswerClose);
     byId("next-button").addEventListener("click", onNext);
     byId("guide-link").addEventListener("click", () => this.showGuide());
@@ -128,6 +129,15 @@ export class GameUI {
     this.startScreen.classList.add("hidden");
     this.gameScreen.classList.remove("hidden");
     this.minimap.classList.toggle("hidden", !mapEnabled);
+  }
+
+  // プレイ中にメニュー(スタート画面)へ戻す。開いている overlay は全て閉じる。
+  returnToStart() {
+    this.closeAnswers();
+    this.hideResult();
+    this.guideOverlay.classList.add("hidden");
+    this.gameScreen.classList.add("hidden");
+    this.startScreen.classList.remove("hidden");
   }
 
   showGuideIfNeeded() {

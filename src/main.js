@@ -31,7 +31,10 @@ ui.bind({
   onAnswerClose: closeAnswers,
   onNext: nextKanji,
   onGuideClose: closeGuide,
+  onMenu: returnToMenu,
 });
+
+let loopStarted = false;
 
 function startGame(selectedSettings) {
   settings = selectedSettings;
@@ -39,8 +42,12 @@ function startGame(selectedSettings) {
   if (questionPool.length < 4) throw new Error("出題プールは4字以上必要です");
   askedChars = new Set();
   ui.showGame(settings.mapEnabled);
-  view = new MazeRenderer(document.getElementById("viewport"));
-  controls = new Controls(view.renderer.domElement, view.camera.fov);
+  // view と controls は 1 回だけ生成して使い回す(WebGL コンテキストの増殖と
+  // window リスナーの多重登録を避けるため。メニュー復帰では破棄しない)。
+  if (!view) {
+    view = new MazeRenderer(document.getElementById("viewport"));
+    controls = new Controls(view.renderer.domElement, view.camera.fov);
+  }
   view.setNorthStar(settings.northStar);
   beginRound(pickNextKanji());
   if (ui.showGuideIfNeeded()) {
@@ -48,7 +55,18 @@ function startGame(selectedSettings) {
     controls.enabled = false;
   }
   lastFrame = performance.now();
-  requestAnimationFrame(frame);
+  if (!loopStarted) {
+    loopStarted = true;
+    requestAnimationFrame(frame);
+  }
+}
+
+// プレイ中にスタート画面(メニュー)へ戻す。ゲームループは回したまま描画だけ止める。
+function returnToMenu() {
+  if (playState === "start") return;
+  playState = "start";
+  if (controls) controls.enabled = false;
+  ui.returnToStart();
 }
 
 function pickNextKanji() {
@@ -147,7 +165,8 @@ function frame(now) {
   const delta = Math.min(.05, (now - lastFrame) / 1000);
   lastFrame = now;
   if (playState === "playing") updatePlayer(delta);
-  view.render(now);
+  // メニュー表示中(start)はゲーム画面が隠れているので描画しない。
+  if (view && playState !== "start") view.render(now);
   requestAnimationFrame(frame);
 }
 
