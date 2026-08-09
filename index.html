@@ -25,17 +25,16 @@
           <fieldset>
             <legend>がくねん</legend>
             <div class="choice-row grade-row">
-              <label><input type="radio" name="grade" checked><span>1ねんせい</span></label>
-              <span class="disabled-choice">2ねんせい<br><small>じゅんびちゅう</small></span>
+              <label><input type="radio" name="grade" value="1" checked><span>1ねんせい</span></label>
+              <label><input type="radio" name="grade" value="2"><span>2ねんせい</span></label>
               <span class="disabled-choice">3〜6ねん<br><small>じゅんびちゅう</small></span>
             </div>
           </fieldset>
 
           <fieldset>
             <legend>いつまで</legend>
-            <div class="choice-row">
-              <label><input type="radio" name="month" checked><span>ぜんぶ</span></label>
-            </div>
+            <div id="month-choices" class="choice-row month-row"></div>
+            <p id="cumulative-note" class="cumulative-note hidden">1ねんせいの かんじも でるよ</p>
           </fieldset>
 
           <div class="setting-columns">
@@ -56,6 +55,7 @@
           </div>
           <button id="start-button" class="primary-button">スタート</button>
           <p class="start-help">パソコンは WASD・やじるしキーで あるき、マウスで みまわします。</p>
+          <p class="kanjivg-credit">かんじの かたち: <a href="http://kanjivg.tagaini.net">KanjiVG</a></p>
         </div>
       </section>
 
@@ -93,7 +93,7 @@
             <h3>とくてん</h3>
             <dl>
               <div><dt>あるいた みち</dt><dd id="result-rate"></dd></div>
-              <div><dt>ふみはりつボーナス</dt><dd id="result-base"></dd></div>
+              <div><dt>たんけんボーナス</dt><dd id="result-base"></dd></div>
               <div><dt>まちがい</dt><dd id="result-penalty"></dd></div>
               <div><dt>ちずなし</dt><dd id="result-multiplier"></dd></div>
               <div class="total-row"><dt>ごうけい</dt><dd id="result-total"></dd></div>

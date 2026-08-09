@@ -72,6 +72,9 @@ export class MazeRenderer {
   buildMaze(maze) {
     this.clearMaze();
     this.maze = maze;
+    // 種明かし中に広げた霧を通常値へ戻す
+    this.scene.fog.near = 25;
+    this.scene.fog.far = 105;
     const floorGeometry = new THREE.BoxGeometry(CELL_SIZE * .96, .1, CELL_SIZE * .96);
     const strokeCells = maze.passageCells.filter((cell) => cell.type === "stroke");
     const bridgeCells = maze.passageCells.filter((cell) => cell.type === "bridge");
@@ -149,6 +152,9 @@ export class MazeRenderer {
     const startPosition = this.camera.position.clone();
     const startQuaternion = this.camera.quaternion.clone();
     const endPosition = new THREE.Vector3(0, this.maze.size * 2.35, 3);
+    // 上空からの見下ろしが夜霧に沈まないよう、種明かし中は霧を遠くへ広げる
+    this.scene.fog.near = endPosition.y * 1.6;
+    this.scene.fog.far = endPosition.y * 3.2;
     const helper = this.camera.clone();
     helper.position.copy(endPosition);
     helper.up.set(0, 0, -1);

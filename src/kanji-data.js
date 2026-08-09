@@ -1,114 +1,25 @@
-// MVP 用の手作り画データ。座標は左上を (0, 0)、右下を (1, 1) とする。
-export const KANJI_DATA = [
-  {
-    char: "一",
-    grade: 1,
-    reading: "いち",
-    meaning: "かずの 1",
-    strokes: [[[0.12, 0.5], [0.88, 0.5]]],
-  },
-  {
-    char: "二",
-    grade: 1,
-    reading: "に",
-    meaning: "かずの 2",
-    strokes: [
-      [[0.22, 0.34], [0.78, 0.34]],
-      [[0.12, 0.68], [0.88, 0.68]],
-    ],
-  },
-  {
-    char: "三",
-    grade: 1,
-    reading: "さん",
-    meaning: "かずの 3",
-    strokes: [
-      [[0.22, 0.25], [0.78, 0.25]],
-      [[0.28, 0.5], [0.72, 0.5]],
-      [[0.12, 0.75], [0.88, 0.75]],
-    ],
-  },
-  {
-    char: "十",
-    grade: 1,
-    reading: "じゅう",
-    meaning: "かずの 10",
-    strokes: [
-      [[0.14, 0.43], [0.86, 0.43]],
-      [[0.5, 0.12], [0.5, 0.88]],
-    ],
-  },
-  {
-    char: "口",
-    grade: 1,
-    reading: "くち",
-    meaning: "ものを たべる ところ",
-    strokes: [
-      [[0.22, 0.18], [0.22, 0.82]],
-      [[0.22, 0.18], [0.78, 0.18], [0.78, 0.82]],
-      [[0.22, 0.82], [0.78, 0.82]],
-    ],
-  },
-  {
-    char: "日",
-    grade: 1,
-    reading: "ひ",
-    meaning: "そらの たいよう",
-    strokes: [
-      [[0.25, 0.12], [0.25, 0.88]],
-      [[0.25, 0.12], [0.75, 0.12], [0.75, 0.88]],
-      [[0.25, 0.5], [0.75, 0.5]],
-      [[0.25, 0.88], [0.75, 0.88]],
-    ],
-  },
-  {
-    char: "田",
-    grade: 1,
-    reading: "た",
-    meaning: "おこめを そだてる ところ",
-    strokes: [
-      [[0.18, 0.15], [0.18, 0.85]],
-      [[0.18, 0.15], [0.82, 0.15], [0.82, 0.85]],
-      [[0.5, 0.15], [0.5, 0.85]],
-      [[0.18, 0.5], [0.82, 0.5]],
-      [[0.18, 0.85], [0.82, 0.85]],
-    ],
-  },
-  {
-    char: "山",
-    grade: 1,
-    reading: "やま",
-    meaning: "たかく もりあがった ところ",
-    strokes: [
-      [[0.5, 0.12], [0.5, 0.82]],
-      [[0.2, 0.34], [0.2, 0.82], [0.8, 0.82]],
-      [[0.8, 0.34], [0.8, 0.82]],
-    ],
-  },
-  {
-    char: "川",
-    grade: 1,
-    reading: "かわ",
-    meaning: "みずが ながれる ところ",
-    strokes: [
-      [[0.22, 0.18], [0.2, 0.75], [0.14, 0.86]],
-      [[0.5, 0.12], [0.5, 0.82]],
-      [[0.76, 0.16], [0.78, 0.68], [0.86, 0.85]],
-    ],
-  },
-  {
-    char: "木",
-    grade: 1,
-    reading: "き",
-    meaning: "みきや えだの ある しょくぶつ",
-    strokes: [
-      [[0.15, 0.42], [0.85, 0.42]],
-      [[0.5, 0.12], [0.5, 0.88]],
-      [[0.5, 0.43], [0.18, 0.82]],
-      [[0.5, 0.43], [0.84, 0.82]],
-    ],
-  },
-];
+import { KANJI_DATA } from "./kanji-data.generated.js";
+
+export { KANJI_DATA };
+
+export const GRADE_MONTHS = {
+  1: [9, 10, 11, 12, 1, 2, 3],
+  // 8月は新出なしだが、「8月まで」のプール指定として受け付ける。
+  2: [4, 5, 6, 7, 8],
+};
+
+export function getKanjiPool(grade, month) {
+  const selectedGrade = Number(grade);
+  const selectedMonth = Number(month);
+  const months = GRADE_MONTHS[selectedGrade];
+  const monthIndex = months?.indexOf(selectedMonth) ?? -1;
+  if (monthIndex < 0) return [];
+  const allowedMonths = new Set(months.slice(0, monthIndex + 1));
+  return KANJI_DATA.filter((kanji) => (
+    kanji.grade < selectedGrade
+    || (kanji.grade === selectedGrade && allowedMonths.has(kanji.month))
+  ));
+}
 
 export function getKanji(char) {
   return KANJI_DATA.find((kanji) => kanji.char === char);

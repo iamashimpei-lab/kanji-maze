@@ -1,3 +1,13 @@
+const SAVE_KEY = "kanji-maze-save-v1";
+const DEFAULT_SETTINGS = { grade: 1, month: 3, mapEnabled: true, northStar: true };
+const MONTH_OPTIONS = {
+  1: [
+    [9, "9がつ"], [10, "10がつ"], [11, "11がつ"], [12, "12がつ"],
+    [1, "1がつ"], [2, "2がつ"], [3, "3がつ", "ぜんぶ"],
+  ],
+  2: [[4, "4がつ"], [5, "5がつ"], [6, "6がつ"], [7, "7がつ", "なつやすみまで"]],
+};
+
 export class GameUI {
   constructor() {
     this.startScreen = byId("start-screen");
@@ -9,10 +19,18 @@ export class GameUI {
     this.notice = byId("notice");
     this.minimap = byId("minimap");
     this.noticeTimer = null;
+    this.restoreSettings();
+    document.querySelectorAll('input[name="grade"]').forEach((input) => {
+      input.addEventListener("change", () => this.updateMonthChoices(Number(input.value)));
+    });
   }
 
   bind({ onStart, onAnswerOpen, onAnswerClose, onNext }) {
-    byId("start-button").addEventListener("click", () => onStart(this.settings()));
+    byId("start-button").addEventListener("click", () => {
+      const settings = this.settings();
+      this.saveSettings(settings);
+      onStart(settings);
+    });
     byId("answer-button").addEventListener("click", onAnswerOpen);
     byId("close-answer").addEventListener("click", onAnswerClose);
     byId("next-button").addEventListener("click", onNext);
@@ -20,9 +38,60 @@ export class GameUI {
 
   settings() {
     return {
+      grade: Number(document.querySelector('input[name="grade"]:checked').value),
+      month: Number(document.querySelector('input[name="month"]:checked').value),
       mapEnabled: document.querySelector('input[name="map"]:checked').value === "on",
       northStar: document.querySelector('input[name="north-star"]:checked').value === "on",
     };
+  }
+
+  restoreSettings() {
+    let saved = DEFAULT_SETTINGS;
+    try {
+      saved = { ...DEFAULT_SETTINGS, ...JSON.parse(localStorage.getItem(SAVE_KEY) || "{}") };
+    } catch {
+      // 保存内容が壊れていても、初期設定で遊べるようにする。
+    }
+    const grade = [1, 2].includes(Number(saved.grade)) ? Number(saved.grade) : DEFAULT_SETTINGS.grade;
+    document.querySelector(`input[name="grade"][value="${grade}"]`).checked = true;
+    document.querySelector(`input[name="map"][value="${saved.mapEnabled ? "on" : "off"}"]`).checked = true;
+    document.querySelector(`input[name="north-star"][value="${saved.northStar ? "on" : "off"}"]`).checked = true;
+    this.updateMonthChoices(grade, Number(saved.month));
+  }
+
+  updateMonthChoices(grade, preferredMonth) {
+    const container = byId("month-choices");
+    const options = MONTH_OPTIONS[grade];
+    const available = options.map(([month]) => month);
+    const selected = available.includes(preferredMonth) ? preferredMonth : available.at(-1);
+    container.replaceChildren();
+    for (const [month, label, note] of options) {
+      const wrapper = document.createElement("label");
+      const input = document.createElement("input");
+      input.type = "radio";
+      input.name = "month";
+      input.value = String(month);
+      input.checked = month === selected;
+      const text = document.createElement("span");
+      text.append(label);
+      if (note) {
+        text.append(document.createElement("br"));
+        const small = document.createElement("small");
+        small.textContent = note;
+        text.append(small);
+      }
+      wrapper.append(input, text);
+      container.appendChild(wrapper);
+    }
+    byId("cumulative-note").classList.toggle("hidden", grade !== 2);
+  }
+
+  saveSettings(settings) {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(settings));
+    } catch {
+      // プライベートブラウズ等で保存不可でもゲーム開始は妨げない。
+    }
   }
 
   showGame(mapEnabled) {

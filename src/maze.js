@@ -1,5 +1,13 @@
 export const DEFAULT_GRID_SIZE = 31;
 export const GRID_PADDING = 3;
+export const SNAP_DISTANCE = 2;
+
+export function gridSizeForStrokeCount(strokeCount) {
+  if (strokeCount <= 4) return 31;
+  if (strokeCount <= 8) return 39;
+  if (strokeCount <= 12) return 47;
+  return 55;
+}
 
 export function cellKey(x, y) {
   return `${x},${y}`;
@@ -120,6 +128,35 @@ function makeLPath(from, to) {
   return [...first, ...second.slice(1)];
 }
 
+// KanjiVG 上で目には接して見える画の端点を、吊り橋にせず画の一部としてつなぐ。
+export function snapNearbyEndpoints(cells, strokes, size, maxDistance = SNAP_DISTANCE) {
+  let addedCount = 0;
+  strokes.forEach((stroke, strokeId) => {
+    const endpoints = [stroke[0], stroke.at(-1)].map((point) => pointToCell(point, size));
+    for (const endpoint of endpoints) {
+      let nearest = null;
+      for (const cell of cells.values()) {
+        if (cell.strokeIds.includes(strokeId)) continue;
+        const distance = Math.abs(endpoint.x - cell.x) + Math.abs(endpoint.y - cell.y);
+        if (distance > maxDistance) continue;
+        if (!nearest || distance < nearest.distance) nearest = { cell, distance };
+      }
+      if (!nearest || nearest.distance === 0) continue;
+      for (const point of makeLPath(endpoint, nearest.cell)) {
+        const key = cellKey(point.x, point.y);
+        const existing = cells.get(key);
+        if (existing) {
+          if (!existing.strokeIds.includes(strokeId)) existing.strokeIds.push(strokeId);
+          continue;
+        }
+        cells.set(key, { x: point.x, y: point.y, type: "stroke", strokeIds: [strokeId] });
+        addedCount += 1;
+      }
+    }
+  });
+  return addedCount;
+}
+
 export function connectWithBridges(cells) {
   const bridges = [];
   let components = connectedComponents(cells);
@@ -144,8 +181,9 @@ export function generateMaze(kanji, options = {}) {
   if (!kanji?.strokes?.length || !kanji.strokes[0].length) {
     throw new Error("漢字には1画以上の画データが必要です");
   }
-  const size = options.size ?? DEFAULT_GRID_SIZE;
+  const size = options.size ?? gridSizeForStrokeCount(kanji.strokes.length);
   const cells = rasterizeStrokes(kanji.strokes, size);
+  const snapCellCount = snapNearbyEndpoints(cells, kanji.strokes, size, options.snapDistance);
   const rawCellCount = cells.size;
   const bridges = connectWithBridges(cells);
   const start = pointToCell(kanji.strokes[0][0], size);
@@ -157,6 +195,7 @@ export function generateMaze(kanji, options = {}) {
     passageCells,
     totalCells: passageCells.length,
     rawCellCount,
+    snapCellCount,
     bridges,
     bridgeCount: bridges.length,
     start,

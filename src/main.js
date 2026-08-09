@@ -1,4 +1,4 @@
-import { KANJI_DATA } from "./kanji-data.js";
+import { getKanjiPool } from "./kanji-data.js";
 import { cellKey, explorationRate, generateMaze } from "./maze.js";
 import { calculateScore, getScoreBreakdown } from "./score.js";
 import { Controls } from "./controls.js";
@@ -17,6 +17,7 @@ let player = { x: 0, z: 0, yaw: 0, pitch: 0 };
 let lastFrame = performance.now();
 let playState = "start";
 let askedChars = new Set();
+let questionPool = [];
 
 ui.bind({
   onStart: startGame,
@@ -27,6 +28,9 @@ ui.bind({
 
 function startGame(selectedSettings) {
   settings = selectedSettings;
+  questionPool = getKanjiPool(settings.grade, settings.month);
+  if (questionPool.length < 4) throw new Error("出題プールは4字以上必要です");
+  askedChars = new Set();
   ui.showGame(settings.mapEnabled);
   view = new MazeRenderer(document.getElementById("viewport"));
   controls = new Controls(view.renderer.domElement, document.getElementById("touch-stick"), document.getElementById("touch-knob"));
@@ -37,10 +41,10 @@ function startGame(selectedSettings) {
 }
 
 function pickNextKanji() {
-  let available = KANJI_DATA.filter((kanji) => !askedChars.has(kanji.char));
+  let available = questionPool.filter((kanji) => !askedChars.has(kanji.char));
   if (available.length === 0) {
     askedChars = new Set();
-    available = [...KANJI_DATA];
+    available = [...questionPool];
   }
   const choice = available[Math.floor(Math.random() * available.length)];
   askedChars.add(choice.char);
@@ -69,7 +73,7 @@ function openAnswers() {
   if (playState !== "playing") return;
   playState = "answering";
   controls.enabled = false;
-  const others = shuffle(KANJI_DATA.filter((kanji) => kanji.char !== currentKanji.char)).slice(0, 3);
+  const others = shuffle(questionPool.filter((kanji) => kanji.char !== currentKanji.char)).slice(0, 3);
   ui.showAnswers(shuffle([currentKanji, ...others]), chooseAnswer);
 }
 
