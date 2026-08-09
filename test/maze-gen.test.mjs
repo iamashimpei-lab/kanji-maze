@@ -17,6 +17,7 @@ import {
   isSampleGraphConnected,
   normalizedToWorld,
   passageRadiusAt,
+  rotateStrokes,
   strokePointAtDistanceFromEnd,
   worldSizeForStrokeCount,
 } from "../src/maze.js";
@@ -41,16 +42,16 @@ assert.ok(HARAI_END_RADIUS >= PLAYER_RADIUS + 0.2, "はらい末端がプレイ�
 assert.deepEqual([1, 5, 9, 13].map(worldSizeForStrokeCount), [64, 80, 96, 112], "世界スケールが仕様と違う");
 
 const allStrokes = KANJI_DATA.flatMap((kanji) => kanji.strokes);
-assert.equal(allStrokes.length, 990, "全画数が990でない");
+assert.equal(allStrokes.length, 9662, "全画数が9662でない");
 assert.ok(allStrokes.every((stroke) => ["tome", "hane", "harai"].includes(stroke.ending)), "ending 未分類の画がある");
 const endingCounts = Object.fromEntries(["tome", "hane", "harai"].map((ending) => [
   ending,
   allStrokes.filter((stroke) => stroke.ending === ending).length,
 ]));
-assert.equal(Object.values(endingCounts).reduce((sum, count) => sum + count, 0), 990, "ending 件数の合計が990でない");
+assert.equal(Object.values(endingCounts).reduce((sum, count) => sum + count, 0), 9662, "ending 件数の合計が9662でない");
 assert.deepEqual(classifyStrokeEnding(null), { ending: "tome", known: false }, "kvg:type 欠落が tome fallback にならない");
 assert.deepEqual(classifyStrokeEnding("unknown"), { ending: "tome", known: false }, "未知 kvg:type が tome fallback にならない");
-console.log(`PASS endings: total=990, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
+console.log(`PASS endings: total=9662, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
 
 // 東西・南北の両方向で、末端距離だけが地形を決めることを固定する。
 for (const [direction, points] of [
@@ -95,12 +96,36 @@ console.log("PASS terrain profiles: east-west/south-north; hane=+0.75m/1.5m, har
 console.log("PASS harai taper: radius=1.7m -> 0.9m monotonic; clearance>=player+0.2m");
 
 assert.deepEqual(new Set(Object.values(KANJI_THEMES)), new Set(THEME_CATEGORIES), "テーマカテゴリ表が一致しない");
-assert.equal(Object.keys(KANJI_THEMES).length, 151, "テーマ表が151字でない");
+assert.equal(Object.keys(KANJI_THEMES).length, 1026, "テーマ表が1026字でない");
 assert.equal(resolveKanjiTheme("々"), "neutral", "未定義字の neutral fallback が効かない");
 for (const kanji of KANJI_DATA) {
   assert.equal(kanji.theme, resolveKanjiTheme(kanji.char), `${kanji.char}: 生成テーマがテーマ表と違う`);
 }
-console.log(`PASS themes: 151 assigned; categories=${THEME_CATEGORIES.join(",")}; undefined=>neutral`);
+console.log(`PASS themes: 1026 assigned; categories=${THEME_CATEGORIES.join(",")}; undefined=>neutral`);
+
+const rotatedSample = KANJI_DATA.find((kanji) => kanji.char === "川");
+assert.ok(rotatedSample, "回転検査用の川が見つからない");
+const rotationProbe = [{ points: [[0.25, 0.5], [0.75, 0.5]], ending: "tome" }];
+const rotationProbeCopy = structuredClone(rotationProbe);
+const rotatedProbe = rotateStrokes(rotationProbe, 90);
+assert.deepEqual(rotationProbe, rotationProbeCopy, "rotateStrokes が入力を破壊した");
+assert.equal(rotatedProbe.length, rotationProbe.length, "rotateStrokes が stroke 数を変えた");
+assert.equal(rotatedProbe[0].points.length, rotationProbe[0].points.length, "rotateStrokes が点数を変えた");
+assert.ok(rotatedProbe[0].points.every((point) => point.every((value) => Number.isFinite(value))), "rotateStrokes が不正な座標を返した");
+
+const baseRotationMaze = generateMaze(rotatedSample);
+const baseYaw = sampleYaw(baseRotationMaze);
+for (const angle of [45, 90, 135]) {
+  const rotatedMaze = generateMaze({
+    ...rotatedSample,
+    strokes: rotateStrokes(rotatedSample.strokes, angle),
+  });
+  assert.ok(isSampleGraphConnected(rotatedMaze), `川: ${angle}° 回転でサンプル点グラフが壊れた`);
+  assert.equal(rotatedMaze.bridgeCount, baseRotationMaze.bridgeCount, `川: ${angle}° 回転で橋本数が変わった`);
+  const delta = normalizeAngle(sampleYaw(rotatedMaze) - baseYaw);
+  assert.ok(Math.abs(delta + angle * Math.PI / 180) < 0.06, `川: ${angle}° 回転で start 向きが追従しない (${(delta * 180 / Math.PI).toFixed(2)}°)`);
+}
+console.log("PASS rotation: rotateStrokes pure; 川 bridgeCount and start yaw follow 45°/90°/135°");
 
 let highestAreaRatio = { char: "", ratio: 0 };
 const scaleCounts = new Map();
@@ -131,8 +156,8 @@ for (const kanji of KANJI_DATA) {
     assert.equal(maze.bridgeCount, expectedBridges.get(kanji.char), `${kanji.char}: 橋本数が違う`);
   }
 }
-assert.equal(KANJI_DATA.length, 151, "生成データが151字でない");
-console.log(`PASS maze: 151 kanji, sample-graph connected/start/samples/collision; samples=${totalSamples}`);
+assert.equal(KANJI_DATA.length, 1026, "生成データが1026字でない");
+console.log(`PASS maze: 1026 kanji, sample-graph connected/start/samples/collision; samples=${totalSamples}`);
 console.log(`PASS distance constants: stroke=${STROKE_RADIUS}m, bridge=${BRIDGE_RADIUS}m, spacing=${SAMPLE_SPACING}m`);
 console.log(`PASS world scales: ${[...scaleCounts].map(([size, count]) => `${size}m=${count}`).join(", ")}`);
 console.log(`PASS passage-area guard: all<40%; max=${highestAreaRatio.char}:${(highestAreaRatio.ratio * 100).toFixed(2)}%`);
@@ -179,11 +204,24 @@ for (const grade of [1, 2]) {
   }
   console.log(`PASS pool monotonic grade=${grade}: ${counts.join(", ")}`);
 }
-assert.equal(getKanjiPool(1, 9).length, 12, "1年9月が12字でない");
+for (const grade of [3, 4, 5, 6]) {
+  let previousCount = 0;
+  const counts = [];
+  for (const month of GRADE_MONTHS[grade]) {
+    const count = getKanjiPool(grade, month).length;
+    assert.ok(count >= previousCount, `${grade}年${month}月: 出題数が減った`);
+    previousCount = count;
+    counts.push(`${month}=${count}`);
+  }
+  console.log(`PASS pool monotonic grade=${grade}: ${counts.join(", ")}`);
+}
 assert.equal(getKanjiPool(1, 3).length, 80, "1年3月が80字でない");
-assert.equal(getKanjiPool(2, 4).length, 95, "2年4月が95字でない");
-assert.equal(getKanjiPool(2, 8).length, 151, "2年8月が151字でない");
-console.log("PASS pool exact: g1/9=12, g1/3=80, g2/4=95, g2/8=151");
+assert.equal(getKanjiPool(2, 3).length, 240, "2年3月が240字でない");
+assert.equal(getKanjiPool(3, 3).length, 440, "3年3月が440字でない");
+assert.equal(getKanjiPool(4, 11).length, 608, "4年11月が608字でない");
+assert.equal(getKanjiPool(5, 3).length, 835, "5年3月が835字でない");
+assert.equal(getKanjiPool(6, 3).length, 1026, "6年3月が1026字でない");
+console.log("PASS pool exact: g1/3=80, g2/3=240, g3/3=440, g4/11=608, g5/3=835, g6/3=1026");
 
 let previous = Infinity;
 for (let percent = 0; percent <= 100; percent += 1) {
@@ -211,4 +249,15 @@ function isMonotonic(values, direction) {
   return values.every((value, index) => index === 0 || (
     direction === "up" ? value >= values[index - 1] - 1e-9 : value <= values[index - 1] + 1e-9
   ));
+}
+
+function sampleYaw(maze) {
+  const firstStroke = maze.samplesByStroke[0];
+  const spawn = firstStroke[Math.min(2, firstStroke.length - 1)];
+  const ahead = firstStroke[Math.min(5, firstStroke.length - 1)];
+  return spawn === ahead ? 0 : Math.atan2(-(ahead.x - spawn.x), -(ahead.z - spawn.z));
+}
+
+function normalizeAngle(angle) {
+  return Math.atan2(Math.sin(angle), Math.cos(angle));
 }

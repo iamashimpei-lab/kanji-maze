@@ -1,5 +1,5 @@
 import { getKanjiPool } from "./kanji-data.js";
-import { canStandAt, explorationRate, generateMaze, markVisitedSamples } from "./maze.js";
+import { canStandAt, explorationRate, generateMaze, markVisitedSamples, rotateStrokes } from "./maze.js";
 import { calculateScore, getScoreBreakdown } from "./score.js";
 import { Controls } from "./controls.js";
 import { MazeRenderer } from "./render3d.js";
@@ -19,6 +19,7 @@ let playState = "start";
 let askedChars = new Set();
 let questionPool = [];
 let touchSteering = { gestureId: null, baseYaw: 0 };
+let roundRotation = 0;
 
 const MOVE_SPEED = 3.8;
 // 酔いにくさとのバランスを見る実機調整値。タップ歩行の旋回は毎秒150度を上限にする。
@@ -63,7 +64,11 @@ function pickNextKanji() {
 
 function beginRound(kanji) {
   currentKanji = kanji;
-  maze = generateMaze(kanji);
+  roundRotation = settings.rotate ? 30 + Math.random() * 300 : 0;
+  const mazeSource = roundRotation
+    ? { ...kanji, strokes: rotateStrokes(kanji.strokes, roundRotation) }
+    : kanji;
+  maze = generateMaze(mazeSource);
   wrongAnswers = 0;
   visited = new Set();
   view.buildMaze(maze);

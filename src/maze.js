@@ -9,6 +9,24 @@ export const HARAI_TERRAIN_LENGTH = 3;
 export const HARAI_DROP = 0.5;
 export const HARAI_END_RADIUS = 0.9;
 
+export function rotateStrokes(strokes, angleDegrees) {
+  const radians = angleDegrees * Math.PI / 180;
+  const sin = Math.sin(radians);
+  const cos = Math.cos(radians);
+  return strokes.map((stroke) => {
+    const sourcePoints = Array.isArray(stroke) ? stroke : stroke.points;
+    const rotatedPoints = sourcePoints.map(([x, y]) => {
+      const dx = x - 0.5;
+      const dy = y - 0.5;
+      return [
+        0.5 + dx * cos - dy * sin,
+        0.5 + dx * sin + dy * cos,
+      ];
+    });
+    return Array.isArray(stroke) ? rotatedPoints : { ...stroke, points: rotatedPoints };
+  });
+}
+
 export function worldSizeForStrokeCount(strokeCount) {
   if (strokeCount <= 4) return 64;
   if (strokeCount <= 8) return 80;
@@ -386,34 +404,29 @@ export function explorationRate(maze, visited) {
 }
 
 export function isSampleGraphConnected(maze) {
-  if (!maze.samples.length) return false;
-  const union = new UnionFind(maze.samples.length);
-  for (const link of maze.sampleLinks) union.union(link.from.id, link.to.id);
-
-  const reach = maze.strokeRadius * 2;
-  const buckets = new Map();
-  const bucketKey = (x, z) => `${x},${z}`;
-  for (const sample of maze.samples) {
-    const bx = Math.floor(sample.x / reach);
-    const bz = Math.floor(sample.z / reach);
-    for (let dx = -1; dx <= 1; dx += 1) {
-      for (let dz = -1; dz <= 1; dz += 1) {
-        for (const other of buckets.get(bucketKey(bx + dx, bz + dz)) ?? []) {
-          if (distanceSquared(sample, other) <= reach ** 2) union.union(sample.id, other.id);
-        }
-      }
+  if (!maze.strokePolylines.length) return false;
+  const union = new UnionFind(maze.strokePolylines.length);
+  const strokeSegments = maze.strokePolylines.map((polyline) => {
+    const segments = [];
+    for (let index = 1; index < polyline.points.length; index += 1) {
+      const from = polyline.points[index - 1];
+      const to = polyline.points[index];
+      if (distanceSquared(from, to) < 1e-10) continue;
+      segments.push({ from, to });
     }
-    const key = bucketKey(bx, bz);
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(sample);
+    return segments;
+  });
+  for (let first = 0; first < strokeSegments.length; first += 1) {
+    for (let second = first + 1; second < strokeSegments.length; second += 1) {
+      const pair = nearestStrokePair(strokeSegments[first], strokeSegments[second], STROKE_RADIUS * 2);
+      if (pair && pair.distance <= STROKE_RADIUS * 2) union.union(first, second);
+    }
   }
   for (const bridge of maze.bridgeSegments) {
-    const first = nearestSample(maze.samplesByStroke[bridge.firstStrokeId], bridge.from);
-    const second = nearestSample(maze.samplesByStroke[bridge.secondStrokeId], bridge.to);
-    union.union(first.id, second.id);
+    union.union(bridge.firstStrokeId, bridge.secondStrokeId);
   }
   const root = union.find(0);
-  return maze.samples.every((sample) => union.find(sample.id) === root);
+  return strokeSegments.every((_, strokeId) => union.find(strokeId) === root);
 }
 
 export function estimateWalkableAreaRatio(maze, resolution = 72) {

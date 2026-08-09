@@ -44,7 +44,7 @@ legend { width: 100%; margin-bottom: 7px; font-weight: 800; }
 .choice-row input:checked + span { color: #fff; background: #243e3b; border-color: #243e3b; box-shadow: 0 4px 0 #152624; }
 .disabled-choice { color: #958e7e; border-style: dashed; background: rgba(150,140,120,.1); font-size: .84rem; }
 small { font-size: .7em; font-weight: 700; }
-.setting-columns { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; }
+.setting-columns { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 15px; }
 .setting-columns fieldset { margin: 0; }
 .primary-button, .answer-button {
   border: 0; border-radius: 999px; color: #fff; background: var(--vermilion); font-weight: 800;

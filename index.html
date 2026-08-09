@@ -27,14 +27,17 @@
             <div class="choice-row grade-row">
               <label><input type="radio" name="grade" value="1" checked><span>1ねんせい</span></label>
               <label><input type="radio" name="grade" value="2"><span>2ねんせい</span></label>
-              <span class="disabled-choice">3〜6ねん<br><small>じゅんびちゅう</small></span>
+              <label><input type="radio" name="grade" value="3"><span>3ねんせい</span></label>
+              <label><input type="radio" name="grade" value="4"><span>4ねんせい</span></label>
+              <label><input type="radio" name="grade" value="5"><span>5ねんせい</span></label>
+              <label><input type="radio" name="grade" value="6"><span>6ねんせい</span></label>
             </div>
           </fieldset>
 
           <fieldset>
             <legend>いつまで</legend>
             <div id="month-choices" class="choice-row month-row"></div>
-            <p id="cumulative-note" class="cumulative-note hidden">1ねんせいの かんじも でるよ</p>
+            <p id="cumulative-note" class="cumulative-note hidden">まえの がくねんの かんじも でるよ</p>
           </fieldset>
 
           <div class="setting-columns">
@@ -50,6 +53,13 @@
               <div class="choice-row">
                 <label><input type="radio" name="north-star" value="on" checked><span>あり</span></label>
                 <label><input type="radio" name="north-star" value="off"><span>なし</span></label>
+              </div>
+            </fieldset>
+            <fieldset>
+              <legend>まわす</legend>
+              <div class="choice-row">
+                <label><input type="radio" name="rotate" value="off" checked><span>しない</span></label>
+                <label><input type="radio" name="rotate" value="on"><span>まわす<br><small>むずかしい</small></span></label>
               </div>
             </fieldset>
           </div>

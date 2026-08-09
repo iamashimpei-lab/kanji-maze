@@ -1,12 +1,21 @@
+import { GRADE_MONTHS } from "./kanji-data.js";
+
 const SAVE_KEY = "kanji-maze-save-v1";
-const DEFAULT_SETTINGS = { grade: 1, month: 3, mapEnabled: true, northStar: true, guideDone2: false };
-const MONTH_OPTIONS = {
-  1: [
-    [9, "9がつ"], [10, "10がつ"], [11, "11がつ"], [12, "12がつ"],
-    [1, "1がつ"], [2, "2がつ"], [3, "3がつ", "ぜんぶ"],
-  ],
-  2: [[4, "4がつ"], [5, "5がつ"], [6, "6がつ"], [7, "7がつ", "なつやすみまで"]],
-};
+const DEFAULT_SETTINGS = { grade: 1, month: 3, mapEnabled: true, northStar: true, rotate: false, guideDone2: false };
+const MONTH_LABELS = Object.freeze({
+  1: "1がつ",
+  2: "2がつ",
+  3: "3がつ",
+  4: "4がつ",
+  5: "5がつ",
+  6: "6がつ",
+  7: "7がつ",
+  8: "8がつ",
+  9: "9がつ",
+  10: "10がつ",
+  11: "11がつ",
+  12: "12がつ",
+});
 
 export class GameUI {
   constructor() {
@@ -51,6 +60,7 @@ export class GameUI {
       month: Number(document.querySelector('input[name="month"]:checked').value),
       mapEnabled: document.querySelector('input[name="map"]:checked').value === "on",
       northStar: document.querySelector('input[name="north-star"]:checked').value === "on",
+      rotate: document.querySelector('input[name="rotate"]:checked').value === "on",
     };
   }
 
@@ -62,20 +72,20 @@ export class GameUI {
       // 保存内容が壊れていても、初期設定で遊べるようにする。
     }
     this.guideDone2 = saved.guideDone2 === true;
-    const grade = [1, 2].includes(Number(saved.grade)) ? Number(saved.grade) : DEFAULT_SETTINGS.grade;
+    const grade = GRADE_MONTHS[Number(saved.grade)] ? Number(saved.grade) : DEFAULT_SETTINGS.grade;
     document.querySelector(`input[name="grade"][value="${grade}"]`).checked = true;
     document.querySelector(`input[name="map"][value="${saved.mapEnabled ? "on" : "off"}"]`).checked = true;
     document.querySelector(`input[name="north-star"][value="${saved.northStar ? "on" : "off"}"]`).checked = true;
+    document.querySelector(`input[name="rotate"][value="${saved.rotate ? "on" : "off"}"]`).checked = true;
     this.updateMonthChoices(grade, Number(saved.month));
   }
 
   updateMonthChoices(grade, preferredMonth) {
     const container = byId("month-choices");
-    const options = MONTH_OPTIONS[grade];
-    const available = options.map(([month]) => month);
+    const available = GRADE_MONTHS[grade] ?? GRADE_MONTHS[DEFAULT_SETTINGS.grade];
     const selected = available.includes(preferredMonth) ? preferredMonth : available.at(-1);
     container.replaceChildren();
-    for (const [month, label, note] of options) {
+    for (const [index, month] of available.entries()) {
       const wrapper = document.createElement("label");
       const input = document.createElement("input");
       input.type = "radio";
@@ -83,17 +93,17 @@ export class GameUI {
       input.value = String(month);
       input.checked = month === selected;
       const text = document.createElement("span");
-      text.append(label);
-      if (note) {
+      text.append(MONTH_LABELS[month] ?? `${month}がつ`);
+      if (index === available.length - 1) {
         text.append(document.createElement("br"));
         const small = document.createElement("small");
-        small.textContent = note;
+        small.textContent = "ぜんぶ";
         text.append(small);
       }
       wrapper.append(input, text);
       container.appendChild(wrapper);
     }
-    byId("cumulative-note").classList.toggle("hidden", grade !== 2);
+    byId("cumulative-note").classList.toggle("hidden", grade === 1);
   }
 
   saveSettings(settings) {

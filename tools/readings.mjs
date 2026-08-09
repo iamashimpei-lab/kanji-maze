@@ -153,3 +153,67 @@ export const READINGS = {
   "頭": { reading: "あたま", meaning: "からだの いちばん上" },
   "鳥": { reading: "とり", meaning: "はねで とぶ いきもの" },
 };
+
+const MEANING_OVERRIDES = Object.freeze({
+  "愛": "いとしい",
+  "案": "あん",
+  "意": "こころ",
+  "営": "いとなむ",
+  "衛": "まもる",
+  "応": "こたえる",
+  "永": "ながい",
+  "協": "あわせる",
+  "議": "はなしあい",
+  "情": "こころ",
+  "証": "あかし",
+  "税": "ぜいきん",
+  "導": "みちびく",
+  "能": "はたらき",
+  "報": "しらせる",
+  "豊": "ゆたか",
+  "防": "ふせぐ",
+  "歴": "うつり",
+  "録": "しるす",
+  "練": "ねる",
+  "例": "たとえ",
+  "連": "つらなる",
+  "量": "はかる",
+  "像": "かたち",
+  "態": "かたち",
+  "提": "さげる",
+  "程": "ほど",
+  "適": "かなう",
+  "復": "もどる",
+  "複": "ふたつ",
+  "欲": "ほしい",
+  "余": "あまる",
+  "由": "よし",
+});
+
+export function hiraganaize(text) {
+  return [...text].map((char) => {
+    const code = char.codePointAt(0);
+    if (code >= 0x30A1 && code <= 0x30F6) return String.fromCodePoint(code - 0x60);
+    return char;
+  }).join("");
+}
+
+export function normalizeReading(reading) {
+  return hiraganaize(reading.replaceAll("-", ""));
+}
+
+export function isKunReading(reading) {
+  return /[ぁ-ゖ]/.test(reading);
+}
+
+export function resolveReading(char, officialReadings) {
+  if (READINGS[char]) return READINGS[char].reading;
+  const candidates = Array.isArray(officialReadings) ? officialReadings : [];
+  const kun = candidates.find((candidate) => isKunReading(candidate));
+  return normalizeReading(kun ?? candidates[0] ?? "");
+}
+
+export function resolveMeaning(char, reading) {
+  if (READINGS[char]) return READINGS[char].meaning;
+  return MEANING_OVERRIDES[char] ?? normalizeReading(reading);
+}

@@ -1,15 +1,25 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { READINGS } from "./readings.mjs";
+import { READINGS, normalizeReading, resolveMeaning, resolveReading } from "./readings.mjs";
 import { classifyStrokeEnding } from "./kanji-endings.mjs";
 import { KANJI_THEMES, THEME_CATEGORIES, resolveKanjiTheme } from "./kanji-themes.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const curriculumPath = path.join(projectRoot, "data/curriculum.json");
+const curriculumUpperPath = path.join(projectRoot, "data/curriculum-upper.json");
+const officialGradesPath = path.join(projectRoot, "data/official-grades.json");
+const officialReadingsPath = path.join(projectRoot, "data/official-readings.json");
 const kanjiDirectory = path.join(projectRoot, "vendor/kanjivg-extract/kanji");
 const outputPath = path.join(projectRoot, "src/kanji-data.generated.js");
 const curriculum = JSON.parse(fs.readFileSync(curriculumPath, "utf8"));
+const curriculumUpper = JSON.parse(fs.readFileSync(curriculumUpperPath, "utf8"));
+const officialGrades = JSON.parse(fs.readFileSync(officialGradesPath, "utf8"));
+const officialReadings = JSON.parse(fs.readFileSync(officialReadingsPath, "utf8"));
+
+function expectedGradeCount(grade) {
+  return officialGrades[String(grade)]?.length ?? 0;
+}
 
 function commandSize(command) {
   return { M: 2, L: 2, H: 1, V: 1, C: 6, S: 4, Q: 4, T: 2, A: 7, Z: 0 }[command.toUpperCase()];
@@ -151,7 +161,7 @@ function sampleStroke(data) {
 }
 
 function round(value) {
-  return Number(Math.max(0, Math.min(1, value)).toFixed(5));
+  return Number(Math.max(0, Math.min(1, value)).toFixed(3));
 }
 
 function strokeDataFromSvg(svg, char) {
@@ -173,25 +183,40 @@ function curriculumEntries() {
       for (const char of lesson.kanji) entries.push({ char, grade, month: lesson.month, unit: lesson.unit });
     }
   }
+  for (const grade of [3, 4, 5, 6]) {
+    for (const lesson of curriculumUpper[`grade${grade}`]) {
+      for (const char of lesson.kanji) entries.push({ char, grade, month: lesson.month, unit: lesson.unit });
+    }
+  }
   return entries;
 }
 
 function verifyEntries(entries) {
-  const grade1Count = entries.filter((entry) => entry.grade === 1).length;
-  const grade2Count = entries.filter((entry) => entry.grade === 2).length;
+  const expectedCounts = Object.fromEntries(Object.entries(officialGrades).map(([grade, chars]) => [Number(grade), chars.length]));
+  const gradeCounts = Object.fromEntries([1, 2, 3, 4, 5, 6].map((grade) => [grade, 0]));
+  const gradeChars = Object.fromEntries([1, 2, 3, 4, 5, 6].map((grade) => [grade, []]));
   const uniqueChars = new Set(entries.map((entry) => entry.char));
-  if (grade1Count !== 80 || grade2Count !== 71 || entries.length !== 151 || uniqueChars.size !== 151) {
-    throw new Error(`カリキュラム件数が不正です: 1年=${grade1Count}, 2年=${grade2Count}, 合計=${entries.length}, 重複除外=${uniqueChars.size}`);
+  for (const entry of entries) {
+    if (!(entry.grade in gradeCounts)) throw new Error(`未知の学年です: ${entry.grade}`);
+    gradeCounts[entry.grade] += 1;
+    gradeChars[entry.grade].push(entry.char);
   }
-  const missingReadings = entries.filter(({ char }) => !READINGS[char]).map(({ char }) => char);
-  const extraReadings = Object.keys(READINGS).filter((char) => !uniqueChars.has(char));
-  if (missingReadings.length || extraReadings.length) {
-    throw new Error(`読み辞書が不一致です: 不足=${missingReadings.join("") || "なし"}, 余分=${extraReadings.join("") || "なし"}`);
+  for (const grade of [1, 2, 3, 4, 5, 6]) {
+    if (gradeCounts[grade] !== expectedCounts[grade]) {
+      throw new Error(`カリキュラム件数が不正です: ${grade}年=${gradeCounts[grade]} (expected ${expectedCounts[grade]})`);
+    }
   }
-  const missingThemes = entries.filter(({ char }) => !Object.hasOwn(KANJI_THEMES, char)).map(({ char }) => char);
-  const extraThemes = Object.keys(KANJI_THEMES).filter((char) => !uniqueChars.has(char));
-  if (missingThemes.length || extraThemes.length || Object.keys(KANJI_THEMES).length !== entries.length) {
-    throw new Error(`テーマ辞書が不一致です: 不足=${missingThemes.join("") || "なし"}, 余分=${extraThemes.join("") || "なし"}`);
+  if (entries.length !== 1026 || uniqueChars.size !== 1026) {
+    throw new Error(`カリキュラム件数が不正です: 合計=${entries.length}, 重複除外=${uniqueChars.size}`);
+  }
+  for (const grade of [1, 2, 3, 4, 5, 6]) {
+    const officialSet = new Set(officialGrades[String(grade)]);
+    const entrySet = new Set(gradeChars[grade]);
+    const missing = [...officialSet].filter((char) => !entrySet.has(char));
+    const extra = [...entrySet].filter((char) => !officialSet.has(char));
+    if (missing.length || extra.length) {
+      throw new Error(`公的配当表と不一致です: ${grade}年 不足=${missing.join("") || "なし"}, 余分=${extra.join("") || "なし"}`);
+    }
   }
 }
 
@@ -212,9 +237,15 @@ function build() {
         ending: stroke.ending,
       };
     });
+    const reading = resolveReading(entry.char, officialReadings[entry.char]);
+    const officialCandidates = (officialReadings[entry.char] ?? []).map((candidate) => normalizeReading(candidate));
+    if (officialCandidates.length && !officialCandidates.includes(normalizeReading(reading))) {
+      throw new Error(`${entry.char}: 読みが official-readings.json と一致しません (${reading})`);
+    }
     return {
       ...entry,
-      ...READINGS[entry.char],
+      reading,
+      meaning: resolveMeaning(entry.char, reading),
       theme: resolveKanjiTheme(entry.char),
       strokes,
     };
@@ -230,7 +261,11 @@ function build() {
       if (!["tome", "hane", "harai"].includes(stroke.ending)) throw new Error(`${kanji.char}: ending が不正です`);
     }
     if (!THEME_CATEGORIES.includes(kanji.theme)) throw new Error(`${kanji.char}: theme が不正です (${kanji.theme})`);
+    if (!kanji.reading || !kanji.meaning) throw new Error(`${kanji.char}: reading/meaning が空です`);
   }
+  const tunedMeaningChars = data
+    .filter((entry) => !Object.hasOwn(READINGS, entry.char) && entry.meaning !== normalizeReading(entry.reading))
+    .map((entry) => entry.char);
   const header = "// tools/build-kanji-data.mjs により生成。直接編集しないでください。\n";
   fs.writeFileSync(outputPath, `${header}export const KANJI_DATA = ${JSON.stringify(data)};\n`);
   const strokeCount = data.reduce((sum, kanji) => sum + kanji.strokes.length, 0);
@@ -238,13 +273,17 @@ function build() {
     ending,
     data.reduce((sum, kanji) => sum + kanji.strokes.filter((stroke) => stroke.ending === ending).length, 0),
   ]));
-  console.log(`PASS curriculum: grade1=80, grade2=71, total=${data.length}`);
-  console.log(`PASS readings: ${Object.keys(READINGS).length} entries`);
+  const fileSize = fs.statSync(outputPath).size;
+  console.log(`PASS curriculum: grade1=${expectedGradeCount(1)}, grade2=${expectedGradeCount(2)}, grade3=${expectedGradeCount(3)}, grade4=${expectedGradeCount(4)}, grade5=${expectedGradeCount(5)}, grade6=${expectedGradeCount(6)}, total=${data.length}`);
+  console.log(`PASS readings: hand=${Object.keys(READINGS).length}, resolved=${data.length}`);
+  console.log(`PASS meanings: resolved=${data.length}, tuned=${tunedMeaningChars.length}`);
+  console.log(`INFO tuned meaning chars: ${tunedMeaningChars.join("") || "なし"}`);
   console.log(`PASS KanjiVG: ${data.length} kanji, ${strokeCount} strokes`);
   console.log(`PASS endings: total=${strokeCount}, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
   console.log(`INFO unknown kvg:type: ${[...unknownTypes].sort().join(", ") || "none"}`);
   console.log(`PASS themes: ${data.length} kanji, categories=${THEME_CATEGORIES.join(",")}`);
   console.log("PASS sampling: 16..28 points/stroke, coordinates=0..1");
+  console.log(`PASS output size: ${fileSize} bytes`);
   console.log(`WROTE ${path.relative(projectRoot, outputPath)}`);
 }
 
