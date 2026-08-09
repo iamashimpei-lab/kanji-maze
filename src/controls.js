@@ -1,17 +1,30 @@
+const MOUSE_LOOK_SENSITIVITY = 0.0035;
+// 2本指ドラッグの実機調整値。1 CSS px あたりの回転量(rad)。
+const TWO_FINGER_LOOK_SENSITIVITY = 0.0042;
+
 export class Controls {
-  constructor(canvas, stick, knob) {
+  constructor(canvas, verticalFovDegrees = 67) {
     this.canvas = canvas;
-    this.stick = stick;
-    this.knob = knob;
+    this.verticalFov = verticalFovDegrees * Math.PI / 180;
     this.keys = new Set();
-    this.move = { x: 0, y: 0 };
     this.lookDelta = { x: 0, y: 0 };
-    this.movePointer = null;
-    this.lookPointer = null;
-    this.stickOrigin = { x: 0, y: 0 };
-    this.dragPoint = { x: 0, y: 0 };
-    this.enabled = true;
+    this.mousePointer = null;
+    this.mousePoint = { x: 0, y: 0 };
+    this.touchPoints = new Map();
+    this.touchMode = "idle";
+    this.touchGestureId = 0;
+    this.touchMidpoint = null;
+    this._enabled = true;
     this.bindEvents();
+  }
+
+  get enabled() {
+    return this._enabled;
+  }
+
+  set enabled(value) {
+    this._enabled = value;
+    if (!value) this.resetPointers();
   }
 
   bindEvents() {
@@ -22,74 +35,141 @@ export class Controls {
       }
     });
     window.addEventListener("keyup", (event) => this.keys.delete(event.code));
-    window.addEventListener("blur", () => this.keys.clear());
+    window.addEventListener("blur", () => {
+      this.keys.clear();
+      this.resetPointers();
+    });
     this.canvas.addEventListener("contextmenu", (event) => event.preventDefault());
     this.canvas.addEventListener("pointerdown", (event) => this.pointerDown(event));
     this.canvas.addEventListener("pointermove", (event) => this.pointerMove(event));
     this.canvas.addEventListener("pointerup", (event) => this.pointerUp(event));
     this.canvas.addEventListener("pointercancel", (event) => this.pointerUp(event));
+    this.canvas.addEventListener("lostpointercapture", (event) => this.pointerUp(event));
   }
 
   pointerDown(event) {
     if (!this.enabled) return;
-    this.canvas.setPointerCapture(event.pointerId);
-    if (event.pointerType === "touch" && event.clientX < innerWidth * 0.5 && this.movePointer === null) {
-      this.movePointer = event.pointerId;
-      this.stickOrigin = { x: event.clientX, y: event.clientY };
-      this.stick.style.left = `${event.clientX}px`;
-      this.stick.style.top = `${event.clientY}px`;
-      this.stick.style.opacity = "1";
+    // 高速タップ等で pointer が既に消えていると setPointerCapture が例外を投げ、
+    // ハンドラごと死んで以後のタッチが無反応になるため握りつぶす
+    try {
+      this.canvas.setPointerCapture(event.pointerId);
+    } catch {
+      // capture できなくても座標イベントは届くので続行する
+    }
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      this.touchPoints.set(event.pointerId, pointFromEvent(event));
+      if (this.touchPoints.size === 1) {
+        this.touchMode = "walk";
+        this.touchGestureId += 1;
+        this.touchMidpoint = null;
+      } else {
+        this.touchMode = "look";
+        this.touchMidpoint = midpointOfFirstTwo(this.touchPoints);
+      }
       return;
     }
-    if (this.lookPointer === null) {
-      this.lookPointer = event.pointerId;
-      this.dragPoint = { x: event.clientX, y: event.clientY };
+    if (this.mousePointer === null) {
+      this.mousePointer = event.pointerId;
+      this.mousePoint = pointFromEvent(event);
     }
   }
 
   pointerMove(event) {
-    if (event.pointerId === this.movePointer) {
-      const dx = event.clientX - this.stickOrigin.x;
-      const dy = event.clientY - this.stickOrigin.y;
-      const length = Math.hypot(dx, dy) || 1;
-      const limit = 38;
-      const scale = Math.min(1, limit / length);
-      const shownX = dx * scale;
-      const shownY = dy * scale;
-      this.knob.style.transform = `translate(${shownX}px, ${shownY}px)`;
-      this.move.x = shownX / limit;
-      this.move.y = -shownY / limit;
-    } else if (event.pointerId === this.lookPointer) {
-      const sensitivity = event.pointerType === "mouse" ? 0.0035 : 0.0042;
-      this.lookDelta.x += (event.clientX - this.dragPoint.x) * sensitivity;
-      this.lookDelta.y += (event.clientY - this.dragPoint.y) * sensitivity;
-      this.dragPoint = { x: event.clientX, y: event.clientY };
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      if (!this.enabled || !this.touchPoints.has(event.pointerId)) return;
+      this.touchPoints.set(event.pointerId, pointFromEvent(event));
+      if (this.touchMode === "look" && this.touchPoints.size >= 2) {
+        const midpoint = midpointOfFirstTwo(this.touchPoints);
+        if (this.touchMidpoint) {
+          // 2本指の中点を使うため、指同士の間隔変化は視点移動にしない。
+          this.lookDelta.x += (midpoint.x - this.touchMidpoint.x) * TWO_FINGER_LOOK_SENSITIVITY;
+          this.lookDelta.y += (midpoint.y - this.touchMidpoint.y) * TWO_FINGER_LOOK_SENSITIVITY;
+        }
+        this.touchMidpoint = midpoint;
+      }
+      return;
     }
+    if (!this.enabled || event.pointerId !== this.mousePointer) return;
+    const sensitivity = event.pointerType === "mouse" ? MOUSE_LOOK_SENSITIVITY : TWO_FINGER_LOOK_SENSITIVITY;
+    this.lookDelta.x += (event.clientX - this.mousePoint.x) * sensitivity;
+    this.lookDelta.y += (event.clientY - this.mousePoint.y) * sensitivity;
+    this.mousePoint = pointFromEvent(event);
   }
 
   pointerUp(event) {
-    if (event.pointerId === this.movePointer) {
-      this.movePointer = null;
-      this.move.x = 0;
-      this.move.y = 0;
-      this.stick.style.opacity = "0";
-      this.knob.style.transform = "translate(0, 0)";
+    if (event.pointerType === "touch") {
+      event.preventDefault();
+      if (!this.touchPoints.delete(event.pointerId)) return;
+      if (this.touchPoints.size === 0) {
+        this.touchMode = "idle";
+        this.touchMidpoint = null;
+      } else if (this.touchMode === "look" && this.touchPoints.size >= 2) {
+        this.touchMidpoint = midpointOfFirstTwo(this.touchPoints);
+      }
+      // 2本指操作後に1本だけ残っても、全て離すまでは歩行へ戻さない。
+      return;
     }
-    if (event.pointerId === this.lookPointer) this.lookPointer = null;
+    if (event.pointerId === this.mousePointer) this.mousePointer = null;
+  }
+
+  resetPointers() {
+    this.mousePointer = null;
+    this.touchPoints.clear();
+    this.touchMode = "idle";
+    this.touchMidpoint = null;
+    this.lookDelta.x = 0;
+    this.lookDelta.y = 0;
+  }
+
+  touchYawOffset() {
+    if (this.touchMode !== "walk" || this.touchPoints.size !== 1) return 0;
+    const point = this.touchPoints.values().next().value;
+    const rect = this.canvas.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return 0;
+    const normalizedX = Math.max(-1, Math.min(1, ((point.x - rect.left) / rect.width) * 2 - 1));
+    const horizontalHalfFov = Math.atan(Math.tan(this.verticalFov / 2) * rect.width / rect.height);
+    return normalizedX * horizontalHalfFov;
   }
 
   read() {
-    if (!this.enabled) return { forward: 0, strafe: 0, lookX: 0, lookY: 0 };
-    const forwardKeys = Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) - Number(this.keys.has("KeyS") || this.keys.has("ArrowDown"));
-    const strafeKeys = Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) - Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft"));
+    if (!this.enabled) return emptyInput();
+    const forward = Number(this.keys.has("KeyW") || this.keys.has("ArrowUp")) - Number(this.keys.has("KeyS") || this.keys.has("ArrowDown"));
+    const strafe = Number(this.keys.has("KeyD") || this.keys.has("ArrowRight")) - Number(this.keys.has("KeyA") || this.keys.has("ArrowLeft"));
+    const touchWalk = this.touchMode === "walk" && this.touchPoints.size === 1;
     const result = {
-      forward: Math.max(-1, Math.min(1, forwardKeys + this.move.y)),
-      strafe: Math.max(-1, Math.min(1, strafeKeys + this.move.x)),
+      forward,
+      strafe,
       lookX: this.lookDelta.x,
       lookY: this.lookDelta.y,
+      touchWalk,
+      touchGestureId: touchWalk ? this.touchGestureId : null,
+      touchYawOffset: touchWalk ? this.touchYawOffset() : 0,
     };
     this.lookDelta.x = 0;
     this.lookDelta.y = 0;
     return result;
   }
+}
+
+function pointFromEvent(event) {
+  return { x: event.clientX, y: event.clientY };
+}
+
+function midpointOfFirstTwo(points) {
+  const [first, second] = [...points.values()];
+  return { x: (first.x + second.x) / 2, y: (first.y + second.y) / 2 };
+}
+
+function emptyInput() {
+  return {
+    forward: 0,
+    strafe: 0,
+    lookX: 0,
+    lookY: 0,
+    touchWalk: false,
+    touchGestureId: null,
+    touchYawOffset: 0,
+  };
 }

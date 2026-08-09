@@ -1,214 +1,328 @@
-export const DEFAULT_GRID_SIZE = 31;
-export const GRID_PADDING = 3;
-export const SNAP_DISTANCE = 2;
+export const STROKE_RADIUS = 1.7;
+export const BRIDGE_RADIUS = 0.95;
+export const PLAYER_RADIUS = 0.45;
+export const SAMPLE_SPACING = 1.2;
+export const SNAP_DISTANCE = 2.4;
 
-export function gridSizeForStrokeCount(strokeCount) {
-  if (strokeCount <= 4) return 31;
-  if (strokeCount <= 8) return 39;
-  if (strokeCount <= 12) return 47;
-  return 55;
+export function worldSizeForStrokeCount(strokeCount) {
+  if (strokeCount <= 4) return 64;
+  if (strokeCount <= 8) return 80;
+  if (strokeCount <= 12) return 96;
+  return 112;
 }
 
-export function cellKey(x, y) {
-  return `${x},${y}`;
+export function normalizedToWorld(point, worldSize) {
+  return { x: (point[0] - 0.5) * worldSize, z: (point[1] - 0.5) * worldSize };
 }
 
-export function pointToCell(point, size = DEFAULT_GRID_SIZE, padding = GRID_PADDING) {
-  const usable = size - 1 - padding * 2;
-  return {
-    x: Math.round(padding + point[0] * usable),
-    y: Math.round(padding + point[1] * usable),
-  };
+export function pointSegmentDistanceSquared(point, from, to) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const lengthSquared = dx * dx + dz * dz;
+  if (lengthSquared === 0) return distanceSquared(point, from);
+  const amount = Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
+  return distanceSquared(point, { x: from.x + dx * amount, z: from.z + dz * amount });
 }
 
-// 端点を両方含む整数グリッド上の Bresenham 線分。
-export function bresenham(x0, y0, x1, y1) {
-  const points = [{ x: x0, y: y0 }];
-  let x = x0;
-  let y = y0;
-  const dx = Math.abs(x1 - x0);
-  const sx = x0 < x1 ? 1 : -1;
-  const dy = -Math.abs(y1 - y0);
-  const sy = y0 < y1 ? 1 : -1;
-  let error = dx + dy;
+function closestPointOnSegment(point, from, to) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const lengthSquared = dx * dx + dz * dz;
+  const amount = lengthSquared === 0
+    ? 0
+    : Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
+  return { x: from.x + dx * amount, z: from.z + dz * amount };
+}
 
-  while (x !== x1 || y !== y1) {
-    const previousX = x;
-    const previousY = y;
-    const twiceError = error * 2;
-    if (twiceError >= dy) {
-      error += dy;
-      x += sx;
-    }
-    if (twiceError <= dx) {
-      error += dx;
-      y += sy;
-    }
-    // 通路の連結判定は4近傍なので、対角移動には直交セルを1つ補う。
-    if (x !== previousX && y !== previousY) points.push({ x, y: previousY });
-    points.push({ x, y });
+function intersectionPoint(first, second) {
+  const r = { x: first.to.x - first.from.x, z: first.to.z - first.from.z };
+  const s = { x: second.to.x - second.from.x, z: second.to.z - second.from.z };
+  const cross = r.x * s.z - r.z * s.x;
+  if (Math.abs(cross) < 1e-9) return null;
+  const offset = { x: second.from.x - first.from.x, z: second.from.z - first.from.z };
+  const t = (offset.x * s.z - offset.z * s.x) / cross;
+  const u = (offset.x * r.z - offset.z * r.x) / cross;
+  if (t < 0 || t > 1 || u < 0 || u > 1) return null;
+  return { x: first.from.x + r.x * t, z: first.from.z + r.z * t };
+}
+
+function closestSegmentPair(first, second) {
+  const intersection = intersectionPoint(first, second);
+  if (intersection) return { from: intersection, to: intersection, distance: 0 };
+  const candidates = [
+    { from: first.from, to: closestPointOnSegment(first.from, second.from, second.to) },
+    { from: first.to, to: closestPointOnSegment(first.to, second.from, second.to) },
+    { from: closestPointOnSegment(second.from, first.from, first.to), to: second.from },
+    { from: closestPointOnSegment(second.to, first.from, first.to), to: second.to },
+  ];
+  for (const candidate of candidates) candidate.distance = Math.sqrt(distanceSquared(candidate.from, candidate.to));
+  return candidates.reduce((best, candidate) => candidate.distance < best.distance ? candidate : best);
+}
+
+class UnionFind {
+  constructor(size) {
+    this.parents = Array.from({ length: size }, (_, index) => index);
+    this.ranks = new Uint8Array(size);
   }
-  return points;
-}
 
-function addStrokeCell(cells, point, strokeId) {
-  const key = cellKey(point.x, point.y);
-  const existing = cells.get(key);
-  if (existing) {
-    if (!existing.strokeIds.includes(strokeId)) existing.strokeIds.push(strokeId);
-    return;
-  }
-  cells.set(key, {
-    x: point.x,
-    y: point.y,
-    type: "stroke",
-    strokeIds: [strokeId],
-  });
-}
-
-export function rasterizeStrokes(strokes, size = DEFAULT_GRID_SIZE) {
-  const cells = new Map();
-  strokes.forEach((stroke, strokeId) => {
-    for (let index = 1; index < stroke.length; index += 1) {
-      const from = pointToCell(stroke[index - 1], size);
-      const to = pointToCell(stroke[index], size);
-      for (const point of bresenham(from.x, from.y, to.x, to.y)) {
-        addStrokeCell(cells, point, strokeId);
-      }
+  find(value) {
+    let root = value;
+    while (this.parents[root] !== root) root = this.parents[root];
+    while (this.parents[value] !== value) {
+      const parent = this.parents[value];
+      this.parents[value] = root;
+      value = parent;
     }
-    if (stroke.length === 1) addStrokeCell(cells, pointToCell(stroke[0], size), strokeId);
-  });
-  return cells;
-}
-
-const NEIGHBORS = [[1, 0], [-1, 0], [0, 1], [0, -1]];
-
-export function connectedComponents(cells) {
-  const remaining = new Set(cells.keys());
-  const components = [];
-  while (remaining.size > 0) {
-    const first = remaining.values().next().value;
-    const queue = [cells.get(first)];
-    const component = [];
-    remaining.delete(first);
-    for (let cursor = 0; cursor < queue.length; cursor += 1) {
-      const cell = queue[cursor];
-      component.push(cell);
-      for (const [dx, dy] of NEIGHBORS) {
-        const key = cellKey(cell.x + dx, cell.y + dy);
-        if (!remaining.has(key)) continue;
-        remaining.delete(key);
-        queue.push(cells.get(key));
-      }
-    }
-    components.push(component);
+    return root;
   }
-  return components;
+
+  union(first, second) {
+    let a = this.find(first);
+    let b = this.find(second);
+    if (a === b) return false;
+    if (this.ranks[a] < this.ranks[b]) [a, b] = [b, a];
+    this.parents[b] = a;
+    if (this.ranks[a] === this.ranks[b]) this.ranks[a] += 1;
+    return true;
+  }
 }
 
-function nearestComponentPair(components) {
+function buildStrokeGeometry(strokes, worldSize) {
+  const polylines = strokes.map((stroke, strokeId) => ({
+    strokeId,
+    points: stroke.map((point) => normalizedToWorld(point, worldSize)),
+  }));
+  const segments = [];
+  for (const polyline of polylines) {
+    for (let index = 1; index < polyline.points.length; index += 1) {
+      const from = polyline.points[index - 1];
+      const to = polyline.points[index];
+      if (distanceSquared(from, to) < 1e-10) continue;
+      segments.push({ from, to, strokeId: polyline.strokeId, type: "stroke", source: "kanji" });
+    }
+  }
+  return { polylines, segments };
+}
+
+function nearestStrokePair(firstSegments, secondSegments, stopAt = -1) {
   let best = null;
-  for (let firstIndex = 0; firstIndex < components.length; firstIndex += 1) {
-    for (let secondIndex = firstIndex + 1; secondIndex < components.length; secondIndex += 1) {
-      for (const from of components[firstIndex]) {
-        for (const to of components[secondIndex]) {
-          const distance = Math.abs(from.x - to.x) + Math.abs(from.y - to.y);
-          if (!best || distance < best.distance) best = { from, to, distance };
-        }
-      }
+  for (const first of firstSegments) {
+    for (const second of secondSegments) {
+      const pair = closestSegmentPair(first, second);
+      if (!best || pair.distance < best.distance) best = { ...pair, first, second };
+      if (best.distance <= stopAt) return best;
     }
   }
   return best;
 }
 
-function makeLPath(from, to) {
-  const corner = { x: to.x, y: from.y };
-  const first = bresenham(from.x, from.y, corner.x, corner.y);
-  const second = bresenham(corner.x, corner.y, to.x, to.y);
-  return [...first, ...second.slice(1)];
-}
-
-// KanjiVG 上で目には接して見える画の端点を、吊り橋にせず画の一部としてつなぐ。
-export function snapNearbyEndpoints(cells, strokes, size, maxDistance = SNAP_DISTANCE) {
-  let addedCount = 0;
-  strokes.forEach((stroke, strokeId) => {
-    const endpoints = [stroke[0], stroke.at(-1)].map((point) => pointToCell(point, size));
-    for (const endpoint of endpoints) {
-      let nearest = null;
-      for (const cell of cells.values()) {
-        if (cell.strokeIds.includes(strokeId)) continue;
-        const distance = Math.abs(endpoint.x - cell.x) + Math.abs(endpoint.y - cell.y);
-        if (distance > maxDistance) continue;
-        if (!nearest || distance < nearest.distance) nearest = { cell, distance };
-      }
-      if (!nearest || nearest.distance === 0) continue;
-      for (const point of makeLPath(endpoint, nearest.cell)) {
-        const key = cellKey(point.x, point.y);
-        const existing = cells.get(key);
-        if (existing) {
-          if (!existing.strokeIds.includes(strokeId)) existing.strokeIds.push(strokeId);
-          continue;
-        }
-        cells.set(key, { x: point.x, y: point.y, type: "stroke", strokeIds: [strokeId] });
-        addedCount += 1;
+function connectStrokes(originalSegments, strokeCount) {
+  const union = new UnionFind(strokeCount);
+  const byStroke = Array.from({ length: strokeCount }, () => []);
+  for (const segment of originalSegments) byStroke[segment.strokeId].push(segment);
+  const snapSegments = [];
+  for (let first = 0; first < strokeCount; first += 1) {
+    for (let second = first + 1; second < strokeCount; second += 1) {
+      const pair = nearestStrokePair(byStroke[first], byStroke[second], SNAP_DISTANCE);
+      if (!pair || pair.distance > STROKE_RADIUS * 2) continue;
+      union.union(first, second);
+      if (pair.distance > 1e-6 && pair.distance <= SNAP_DISTANCE) {
+        snapSegments.push({
+          from: pair.from,
+          to: pair.to,
+          strokeId: first,
+          joinedStrokeId: second,
+          type: "stroke",
+          source: "snap",
+        });
       }
     }
-  });
-  return addedCount;
-}
+  }
 
-export function connectWithBridges(cells) {
   const bridges = [];
-  let components = connectedComponents(cells);
-  while (components.length > 1) {
-    const nearest = nearestComponentPair(components);
-    const path = makeLPath(nearest.from, nearest.to);
-    const added = [];
-    for (const point of path) {
-      const key = cellKey(point.x, point.y);
-      if (cells.has(key)) continue;
-      const bridgeCell = { x: point.x, y: point.y, type: "bridge", strokeIds: [] };
-      cells.set(key, bridgeCell);
-      added.push(bridgeCell);
+  while (new Set(Array.from({ length: strokeCount }, (_, index) => union.find(index))).size > 1) {
+    let nearest = null;
+    for (let first = 0; first < strokeCount; first += 1) {
+      for (let second = first + 1; second < strokeCount; second += 1) {
+        if (union.find(first) === union.find(second)) continue;
+        const pair = nearestStrokePair(byStroke[first], byStroke[second]);
+        if (!nearest || pair.distance < nearest.distance) nearest = { ...pair, firstStrokeId: first, secondStrokeId: second };
+      }
     }
-    bridges.push({ from: nearest.from, to: nearest.to, cells: added });
-    components = connectedComponents(cells);
+    if (!nearest) throw new Error("画の連結点を求められませんでした");
+    const bridge = {
+      from: nearest.from,
+      to: nearest.to,
+      firstStrokeId: nearest.firstStrokeId,
+      secondStrokeId: nearest.secondStrokeId,
+      type: "bridge",
+    };
+    bridges.push(bridge);
+    union.union(nearest.firstStrokeId, nearest.secondStrokeId);
   }
-  return bridges;
+  return { snapSegments, bridges };
 }
 
-export function generateMaze(kanji, options = {}) {
-  if (!kanji?.strokes?.length || !kanji.strokes[0].length) {
-    throw new Error("漢字には1画以上の画データが必要です");
+function samplePolyline(polyline, spacing, firstId) {
+  const lengths = [];
+  let totalLength = 0;
+  for (let index = 1; index < polyline.points.length; index += 1) {
+    const length = Math.sqrt(distanceSquared(polyline.points[index - 1], polyline.points[index]));
+    lengths.push(length);
+    totalLength += length;
   }
-  const size = options.size ?? gridSizeForStrokeCount(kanji.strokes.length);
-  const cells = rasterizeStrokes(kanji.strokes, size);
-  const snapCellCount = snapNearbyEndpoints(cells, kanji.strokes, size, options.snapDistance);
-  const rawCellCount = cells.size;
-  const bridges = connectWithBridges(cells);
-  const start = pointToCell(kanji.strokes[0][0], size);
-  const passageCells = [...cells.values()];
+  const targets = [];
+  for (let target = 0; target < totalLength; target += spacing) targets.push(target);
+  if (!targets.length || totalLength - targets.at(-1) > 1e-6) targets.push(totalLength);
+  const samples = [];
+  let segmentIndex = 0;
+  let elapsed = 0;
+  for (const target of targets) {
+    while (segmentIndex < lengths.length - 1 && target > elapsed + lengths[segmentIndex]) {
+      elapsed += lengths[segmentIndex];
+      segmentIndex += 1;
+    }
+    const from = polyline.points[segmentIndex];
+    const to = polyline.points[segmentIndex + 1] ?? from;
+    const amount = lengths[segmentIndex] ? (target - elapsed) / lengths[segmentIndex] : 0;
+    samples.push({
+      id: firstId + samples.length,
+      strokeId: polyline.strokeId,
+      x: from.x + (to.x - from.x) * amount,
+      z: from.z + (to.z - from.z) * amount,
+    });
+  }
+  return samples;
+}
+
+function buildSamples(polylines) {
+  const samples = [];
+  const sampleLinks = [];
+  const samplesByStroke = [];
+  for (const polyline of polylines) {
+    const strokeSamples = samplePolyline(polyline, SAMPLE_SPACING, samples.length);
+    for (let index = 1; index < strokeSamples.length; index += 1) {
+      sampleLinks.push({ from: strokeSamples[index - 1], to: strokeSamples[index], strokeId: polyline.strokeId });
+    }
+    samples.push(...strokeSamples);
+    samplesByStroke.push(strokeSamples);
+  }
+  return { samples, sampleLinks, samplesByStroke };
+}
+
+export function generateMaze(kanji) {
+  if (!kanji?.strokes?.length || kanji.strokes.some((stroke) => stroke.length < 2)) {
+    throw new Error("漢字には2点以上からなる画データが必要です");
+  }
+  const worldSize = worldSizeForStrokeCount(kanji.strokes.length);
+  const geometry = buildStrokeGeometry(kanji.strokes, worldSize);
+  const connections = connectStrokes(geometry.segments, kanji.strokes.length);
+  const sampleData = buildSamples(geometry.polylines);
   return {
     char: kanji.char,
-    size,
-    cells,
-    passageCells,
-    totalCells: passageCells.length,
-    rawCellCount,
-    snapCellCount,
-    bridges,
-    bridgeCount: bridges.length,
-    start,
+    worldSize,
+    strokeRadius: STROKE_RADIUS,
+    bridgeRadius: BRIDGE_RADIUS,
+    strokePolylines: geometry.polylines,
+    strokeSegments: [...geometry.segments, ...connections.snapSegments],
+    bridgeSegments: connections.bridges,
+    bridges: connections.bridges,
+    bridgeCount: connections.bridges.length,
+    snapSegments: connections.snapSegments,
+    samples: sampleData.samples,
+    samplesByStroke: sampleData.samplesByStroke,
+    sampleLinks: sampleData.sampleLinks,
+    totalSamples: sampleData.samples.length,
+    start: sampleData.samples[0],
   };
 }
 
-export function isMazeConnected(maze) {
-  return connectedComponents(maze.cells).length === 1;
+export function isInsidePassage(maze, x, z, clearance = 0) {
+  const point = { x, z };
+  const strokeLimit = Math.max(0, maze.strokeRadius - clearance) ** 2;
+  for (const segment of maze.strokeSegments) {
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= strokeLimit) return true;
+  }
+  const bridgeLimit = Math.max(0, maze.bridgeRadius - clearance) ** 2;
+  for (const segment of maze.bridgeSegments) {
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= bridgeLimit) return true;
+  }
+  return false;
+}
+
+export function canStandAt(maze, x, z) {
+  return isInsidePassage(maze, x, z, PLAYER_RADIUS);
+}
+
+export function markVisitedSamples(maze, visited, x, z) {
+  const limitSquared = (maze.strokeRadius + 0.5) ** 2;
+  let changed = false;
+  for (const sample of maze.samples) {
+    if (visited.has(sample.id)) continue;
+    if ((sample.x - x) ** 2 + (sample.z - z) ** 2 > limitSquared) continue;
+    visited.add(sample.id);
+    changed = true;
+  }
+  return changed;
 }
 
 export function explorationRate(maze, visited) {
-  if (!maze.totalCells) return 0;
+  if (!maze.totalSamples) return 0;
   let count = 0;
-  for (const key of visited) if (maze.cells.has(key)) count += 1;
-  return count / maze.totalCells;
+  for (const id of visited) if (Number.isInteger(id) && id >= 0 && id < maze.totalSamples) count += 1;
+  return count / maze.totalSamples;
+}
+
+export function isSampleGraphConnected(maze) {
+  if (!maze.samples.length) return false;
+  const union = new UnionFind(maze.samples.length);
+  for (const link of maze.sampleLinks) union.union(link.from.id, link.to.id);
+
+  const reach = maze.strokeRadius * 2;
+  const buckets = new Map();
+  const bucketKey = (x, z) => `${x},${z}`;
+  for (const sample of maze.samples) {
+    const bx = Math.floor(sample.x / reach);
+    const bz = Math.floor(sample.z / reach);
+    for (let dx = -1; dx <= 1; dx += 1) {
+      for (let dz = -1; dz <= 1; dz += 1) {
+        for (const other of buckets.get(bucketKey(bx + dx, bz + dz)) ?? []) {
+          if (distanceSquared(sample, other) <= reach ** 2) union.union(sample.id, other.id);
+        }
+      }
+    }
+    const key = bucketKey(bx, bz);
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(sample);
+  }
+  for (const bridge of maze.bridgeSegments) {
+    const first = nearestSample(maze.samplesByStroke[bridge.firstStrokeId], bridge.from);
+    const second = nearestSample(maze.samplesByStroke[bridge.secondStrokeId], bridge.to);
+    union.union(first.id, second.id);
+  }
+  const root = union.find(0);
+  return maze.samples.every((sample) => union.find(sample.id) === root);
+}
+
+export function estimateWalkableAreaRatio(maze, resolution = 72) {
+  let inside = 0;
+  for (let row = 0; row < resolution; row += 1) {
+    const z = ((row + 0.5) / resolution - 0.5) * maze.worldSize;
+    for (let column = 0; column < resolution; column += 1) {
+      const x = ((column + 0.5) / resolution - 0.5) * maze.worldSize;
+      if (isInsidePassage(maze, x, z)) inside += 1;
+    }
+  }
+  return inside / (resolution ** 2);
+}
+
+function nearestSample(samples, point) {
+  return samples.reduce((best, sample) => {
+    const candidate = distanceSquared(sample, point);
+    return !best || candidate < best.distance ? { ...sample, distance: candidate } : best;
+  }, null);
+}
+
+function distanceSquared(first, second) {
+  return (first.x - second.x) ** 2 + (first.z - second.z) ** 2;
 }

@@ -1,5 +1,5 @@
 const SAVE_KEY = "kanji-maze-save-v1";
-const DEFAULT_SETTINGS = { grade: 1, month: 3, mapEnabled: true, northStar: true };
+const DEFAULT_SETTINGS = { grade: 1, month: 3, mapEnabled: true, northStar: true, guideDone2: false };
 const MONTH_OPTIONS = {
   1: [
     [9, "9がつ"], [10, "10がつ"], [11, "11がつ"], [12, "12がつ"],
@@ -18,14 +18,16 @@ export class GameUI {
     this.feedback = byId("answer-feedback");
     this.notice = byId("notice");
     this.minimap = byId("minimap");
+    this.guideOverlay = byId("guide-overlay");
     this.noticeTimer = null;
+    this.guideDone2 = false;
     this.restoreSettings();
     document.querySelectorAll('input[name="grade"]').forEach((input) => {
       input.addEventListener("change", () => this.updateMonthChoices(Number(input.value)));
     });
   }
 
-  bind({ onStart, onAnswerOpen, onAnswerClose, onNext }) {
+  bind({ onStart, onAnswerOpen, onAnswerClose, onNext, onGuideClose }) {
     byId("start-button").addEventListener("click", () => {
       const settings = this.settings();
       this.saveSettings(settings);
@@ -34,6 +36,13 @@ export class GameUI {
     byId("answer-button").addEventListener("click", onAnswerOpen);
     byId("close-answer").addEventListener("click", onAnswerClose);
     byId("next-button").addEventListener("click", onNext);
+    byId("guide-link").addEventListener("click", () => this.showGuide());
+    byId("guide-close").addEventListener("click", () => {
+      this.guideDone2 = true;
+      this.updateSavedValues({ guideDone2: true });
+      this.guideOverlay.classList.add("hidden");
+      onGuideClose();
+    });
   }
 
   settings() {
@@ -52,6 +61,7 @@ export class GameUI {
     } catch {
       // 保存内容が壊れていても、初期設定で遊べるようにする。
     }
+    this.guideDone2 = saved.guideDone2 === true;
     const grade = [1, 2].includes(Number(saved.grade)) ? Number(saved.grade) : DEFAULT_SETTINGS.grade;
     document.querySelector(`input[name="grade"][value="${grade}"]`).checked = true;
     document.querySelector(`input[name="map"][value="${saved.mapEnabled ? "on" : "off"}"]`).checked = true;
@@ -87,8 +97,18 @@ export class GameUI {
   }
 
   saveSettings(settings) {
+    this.updateSavedValues(settings);
+  }
+
+  updateSavedValues(values) {
+    let saved = {};
     try {
-      localStorage.setItem(SAVE_KEY, JSON.stringify(settings));
+      saved = JSON.parse(localStorage.getItem(SAVE_KEY) || "{}");
+    } catch {
+      // 壊れた保存内容は、新しい値で置き換える。
+    }
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({ ...saved, ...values }));
     } catch {
       // プライベートブラウズ等で保存不可でもゲーム開始は妨げない。
     }
@@ -98,6 +118,19 @@ export class GameUI {
     this.startScreen.classList.add("hidden");
     this.gameScreen.classList.remove("hidden");
     this.minimap.classList.toggle("hidden", !mapEnabled);
+  }
+
+  showGuideIfNeeded() {
+    if (this.guideDone2) return false;
+    this.showGuide();
+    return true;
+  }
+
+  showGuide() {
+    const touch = navigator.maxTouchPoints > 0 || matchMedia("(pointer: coarse)").matches;
+    byId("touch-guide").classList.toggle("hidden", !touch);
+    byId("desktop-guide").classList.toggle("hidden", touch);
+    this.guideOverlay.classList.remove("hidden");
   }
 
   showAnswers(choices, choose) {
@@ -154,18 +187,38 @@ export class GameUI {
     const canvas = this.minimap;
     const context = canvas.getContext("2d");
     const size = canvas.width;
-    const scale = size / maze.size;
+    const padding = 8;
+    const scale = (size - padding * 2) / maze.worldSize;
+    const mapPoint = (point) => ({
+      x: padding + (point.x + maze.worldSize / 2) * scale,
+      y: padding + (point.z + maze.worldSize / 2) * scale,
+    });
     context.fillStyle = "#eee4c9";
     context.fillRect(0, 0, size, size);
+    context.strokeStyle = "#252927";
     context.fillStyle = "#252927";
-    for (const key of visited) {
-      const [x, y] = key.split(",").map(Number);
-      context.fillRect(x * scale - .3, y * scale - .3, scale + .6, scale + .6);
+    context.lineWidth = Math.max(2.2, maze.strokeRadius * 2 * scale);
+    context.lineCap = "round";
+    context.lineJoin = "round";
+    for (const link of maze.sampleLinks) {
+      if (!visited.has(link.from.id) || !visited.has(link.to.id)) continue;
+      const from = mapPoint(link.from);
+      const to = mapPoint(link.to);
+      context.beginPath();
+      context.moveTo(from.x, from.y);
+      context.lineTo(to.x, to.y);
+      context.stroke();
     }
-    const px = (player.x + .5) * scale;
-    const py = (player.y + .5) * scale;
+    for (const sample of maze.samples) {
+      if (!visited.has(sample.id)) continue;
+      const point = mapPoint(sample);
+      context.beginPath();
+      context.arc(point.x, point.y, context.lineWidth / 2, 0, Math.PI * 2);
+      context.fill();
+    }
+    const current = mapPoint(player);
     context.save();
-    context.translate(px, py);
+    context.translate(current.x, current.y);
     context.rotate(yaw);
     context.beginPath();
     context.moveTo(0, -6);

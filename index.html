@@ -2,7 +2,7 @@
 <html lang="ja">
   <head>
     <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
     <meta name="theme-color" content="#081127">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="mobile-web-app-capable" content="yes">
@@ -55,6 +55,7 @@
           </div>
           <button id="start-button" class="primary-button">スタート</button>
           <p class="start-help">パソコンは WASD・やじるしキーで あるき、マウスで みまわします。</p>
+          <button id="guide-link" class="guide-link" type="button">そうさの せつめい</button>
           <p class="kanjivg-credit">かんじの かたち: <a href="http://kanjivg.tagaini.net">KanjiVG</a></p>
         </div>
       </section>
@@ -68,8 +69,35 @@
           </div>
           <canvas id="minimap" width="180" height="180" aria-label="あるいた道の地図"></canvas>
           <button id="answer-button" class="answer-button">こたえる</button>
-          <div id="touch-stick" aria-hidden="true"><div id="touch-knob"></div></div>
           <p id="notice" role="status" aria-live="polite"></p>
+        </div>
+      </section>
+
+      <section id="guide-overlay" class="overlay guide-overlay hidden" aria-modal="true" role="dialog" aria-labelledby="guide-title">
+        <div class="guide-card">
+          <p class="eyebrow">さいしょに おぼえよう</p>
+          <h2 id="guide-title">そうさの しかた</h2>
+          <div id="touch-guide" class="guide-columns">
+            <div class="guide-step">
+              <div class="tap-picture" aria-hidden="true"><span></span></div>
+              <p>いきたい ほうを ゆびで<br><strong>おしつづけると あるくよ</strong></p>
+            </div>
+            <div class="guide-step">
+              <div class="two-finger-picture horizontal" aria-hidden="true"><span></span><span></span></div>
+              <p>2ほんの ゆびで よこに なぞると<br><strong>むきが かわるよ</strong></p>
+            </div>
+            <div class="guide-step">
+              <div class="two-finger-picture vertical" aria-hidden="true"><span></span><span></span></div>
+              <p>うえを みたいときは 2ほんの ゆびで<br><strong>たてに なぞってね</strong></p>
+            </div>
+          </div>
+          <div id="desktop-guide" class="desktop-guide hidden">
+            <div class="key-picture" aria-hidden="true"><span>W</span><span>A</span><span>S</span><span>D</span></div>
+            <p><strong>WASD・やじるしキー</strong>で あるく</p>
+            <div class="mouse-picture" aria-hidden="true"></div>
+            <p><strong>マウスを おしながら うごかして</strong><br>みまわす</p>
+          </div>
+          <button id="guide-close" class="primary-button" type="button">わかった</button>
         </div>
       </section>
 
