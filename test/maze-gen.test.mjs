@@ -2,17 +2,28 @@ import assert from "node:assert/strict";
 import { GRADE_MONTHS, KANJI_DATA, getKanjiPool } from "../src/kanji-data.js";
 import {
   BRIDGE_RADIUS,
+  HANE_RISE,
+  HANE_TERRAIN_LENGTH,
+  HARAI_DROP,
+  HARAI_END_RADIUS,
+  HARAI_TERRAIN_LENGTH,
+  PLAYER_RADIUS,
   SAMPLE_SPACING,
   STROKE_RADIUS,
   canStandAt,
   estimateWalkableAreaRatio,
+  floorHeightAt,
   generateMaze,
   isSampleGraphConnected,
   normalizedToWorld,
+  passageRadiusAt,
+  strokePointAtDistanceFromEnd,
   worldSizeForStrokeCount,
 } from "../src/maze.js";
 import { calculateScore } from "../src/score.js";
 import { computeWallContours, createWallGeometry } from "../src/render3d.js";
+import { classifyStrokeEnding } from "../tools/kanji-endings.mjs";
+import { KANJI_THEMES, THEME_CATEGORIES, resolveKanjiTheme } from "../tools/kanji-themes.mjs";
 
 const expectedBridges = new Map([
   ["一", 0], ["二", 1], ["三", 2], ["十", 0], ["口", 0],
@@ -22,7 +33,74 @@ const expectedBridges = new Map([
 assert.equal(STROKE_RADIUS, 1.7, "画の通路半径が1.7mでない");
 assert.equal(BRIDGE_RADIUS, 0.95, "橋の通路半径が0.95mでない");
 assert.equal(SAMPLE_SPACING, 1.2, "踏破サンプル間隔が1.2mでない");
+assert.equal(HANE_TERRAIN_LENGTH, 1.5, "はねの地形長が1.5mでない");
+assert.ok(HANE_RISE >= 0.6 && HANE_RISE <= 0.9, "はねの上昇量が0.6〜0.9mでない");
+assert.equal(HARAI_TERRAIN_LENGTH, 3, "はらいの地形長が3mでない");
+assert.ok(HARAI_DROP >= 0.4 && HARAI_DROP <= 0.6, "はらいの下降量が0.4〜0.6mでない");
+assert.ok(HARAI_END_RADIUS >= PLAYER_RADIUS + 0.2, "はらい末端がプレイヤー半径+0.2mより細い");
 assert.deepEqual([1, 5, 9, 13].map(worldSizeForStrokeCount), [64, 80, 96, 112], "世界スケールが仕様と違う");
+
+const allStrokes = KANJI_DATA.flatMap((kanji) => kanji.strokes);
+assert.equal(allStrokes.length, 990, "全画数が990でない");
+assert.ok(allStrokes.every((stroke) => ["tome", "hane", "harai"].includes(stroke.ending)), "ending 未分類の画がある");
+const endingCounts = Object.fromEntries(["tome", "hane", "harai"].map((ending) => [
+  ending,
+  allStrokes.filter((stroke) => stroke.ending === ending).length,
+]));
+assert.equal(Object.values(endingCounts).reduce((sum, count) => sum + count, 0), 990, "ending 件数の合計が990でない");
+assert.deepEqual(classifyStrokeEnding(null), { ending: "tome", known: false }, "kvg:type 欠落が tome fallback にならない");
+assert.deepEqual(classifyStrokeEnding("unknown"), { ending: "tome", known: false }, "未知 kvg:type が tome fallback にならない");
+console.log(`PASS endings: total=990, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
+
+// 東西・南北の両方向で、末端距離だけが地形を決めることを固定する。
+for (const [direction, points] of [
+  ["east-west", [[0.9, 0.5], [0.1, 0.5]]],
+  ["south-north", [[0.5, 0.9], [0.5, 0.1]]],
+]) {
+  const terrainMaze = (ending) => generateMaze({
+    char: "試",
+    theme: "neutral",
+    strokes: [{ points, type: null, ending }],
+  });
+  const hane = terrainMaze("hane");
+  const haneDistances = [4, 1.5, 1, 0.5, 0];
+  const haneHeights = haneDistances.map((distance) => {
+    const point = strokePointAtDistanceFromEnd(hane, 0, distance);
+    return floorHeightAt(hane, point.x, point.z);
+  });
+  assert.equal(haneHeights[0], 0, `${direction}: はねの画途中が平らでない`);
+  assert.equal(haneHeights[1], 0, `${direction}: はね地形が1.5mより内側へ漏れた`);
+  assert.ok(isMonotonic(haneHeights.slice(1), "up"), `${direction}: はねの高さが単調増加でない`);
+  assert.ok(haneHeights.at(-1) >= 0.6 && haneHeights.at(-1) <= 0.9, `${direction}: はね先端の高さが範囲外`);
+
+  const harai = terrainMaze("harai");
+  const haraiDistances = [4, 3, 2, 1, 0];
+  const haraiPoints = haraiDistances.map((distance) => strokePointAtDistanceFromEnd(harai, 0, distance));
+  const haraiHeights = haraiPoints.map((point) => floorHeightAt(harai, point.x, point.z));
+  const haraiRadii = haraiPoints.map((point) => passageRadiusAt(harai, point.x, point.z));
+  assert.equal(haraiHeights[0], 0, `${direction}: はらいの画途中が平らでない`);
+  assert.equal(haraiHeights[1], 0, `${direction}: はらい地形が3mより内側へ漏れた`);
+  assert.ok(isMonotonic(haraiHeights.slice(1), "down"), `${direction}: はらいの高さが単調減少でない`);
+  assert.ok(haraiHeights.at(-1) <= -0.4 && haraiHeights.at(-1) >= -0.6, `${direction}: はらい先端の高さが範囲外`);
+  assert.ok(isMonotonic(haraiRadii, "down"), `${direction}: はらい半径が単調減少でない`);
+  assert.ok(Math.abs(haraiRadii[0] - 1.7) < 1e-9 && Math.abs(haraiRadii.at(-1) - 0.9) < 1e-9, `${direction}: はらい半径の端値が違う`);
+
+  const tome = terrainMaze("tome");
+  for (const distance of [8, 4, 3, 1.5, 0]) {
+    const point = strokePointAtDistanceFromEnd(tome, 0, distance);
+    assert.equal(floorHeightAt(tome, point.x, point.z), 0, `${direction}: とめに高低差がある`);
+  }
+}
+console.log("PASS terrain profiles: east-west/south-north; hane=+0.75m/1.5m, harai=-0.5m/3m, tome=flat");
+console.log("PASS harai taper: radius=1.7m -> 0.9m monotonic; clearance>=player+0.2m");
+
+assert.deepEqual(new Set(Object.values(KANJI_THEMES)), new Set(THEME_CATEGORIES), "テーマカテゴリ表が一致しない");
+assert.equal(Object.keys(KANJI_THEMES).length, 151, "テーマ表が151字でない");
+assert.equal(resolveKanjiTheme("々"), "neutral", "未定義字の neutral fallback が効かない");
+for (const kanji of KANJI_DATA) {
+  assert.equal(kanji.theme, resolveKanjiTheme(kanji.char), `${kanji.char}: 生成テーマがテーマ表と違う`);
+}
+console.log(`PASS themes: 151 assigned; categories=${THEME_CATEGORIES.join(",")}; undefined=>neutral`);
 
 let highestAreaRatio = { char: "", ratio: 0 };
 const scaleCounts = new Map();
@@ -32,12 +110,16 @@ for (const kanji of KANJI_DATA) {
   assert.equal(maze.worldSize, worldSizeForStrokeCount(kanji.strokes.length), `${kanji.char}: 世界スケールが違う`);
   assert.ok(maze.totalSamples > 0, `${kanji.char}: 踏破サンプル点がない`);
   assert.ok(isSampleGraphConnected(maze), `${kanji.char}: サンプル点グラフが単一連結でない`);
-  const expectedStart = normalizedToWorld(kanji.strokes[0][0], maze.worldSize);
+  const expectedStart = normalizedToWorld(kanji.strokes[0].points[0], maze.worldSize);
   assert.equal(maze.start.id, 0, `${kanji.char}: スタートが最初のサンプルでない`);
   assert.equal(maze.start.strokeId, 0, `${kanji.char}: スタートが1画目でない`);
   assert.ok(Math.abs(maze.start.x - expectedStart.x) < 1e-9 && Math.abs(maze.start.z - expectedStart.z) < 1e-9, `${kanji.char}: スタートが1画目の書き始めでない`);
   assert.ok(canStandAt(maze, maze.start.x, maze.start.z), `${kanji.char}: スタート位置に立てない`);
   assert.ok(maze.samples.every((sample) => canStandAt(maze, sample.x, sample.z)), `${kanji.char}: 画上のサンプル点に立てない`);
+  for (const stroke of maze.strokePolylines.filter((candidate) => candidate.ending === "harai")) {
+    const end = stroke.points.at(-1);
+    assert.ok(passageRadiusAt(maze, end.x, end.z) >= PLAYER_RADIUS + 0.2, `${kanji.char}: はらい末端が歩行可能幅を満たさない`);
+  }
 
   // 距離場を72×72点で積分した歩行可能面積。隣接画が溶けて巨大な広場になる事故を検出する。
   const areaRatio = estimateWalkableAreaRatio(maze, 72);
@@ -123,4 +205,10 @@ function signedArea2d(points) {
     area += point.x * next.y - next.x * point.y;
   }
   return area / 2;
+}
+
+function isMonotonic(values, direction) {
+  return values.every((value, index) => index === 0 || (
+    direction === "up" ? value >= values[index - 1] - 1e-9 : value <= values[index - 1] + 1e-9
+  ));
 }

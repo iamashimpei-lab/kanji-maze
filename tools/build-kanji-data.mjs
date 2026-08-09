@@ -2,6 +2,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { READINGS } from "./readings.mjs";
+import { classifyStrokeEnding } from "./kanji-endings.mjs";
+import { KANJI_THEMES, THEME_CATEGORIES, resolveKanjiTheme } from "./kanji-themes.mjs";
 
 const projectRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const curriculumPath = path.join(projectRoot, "data/curriculum.json");
@@ -152,10 +154,16 @@ function round(value) {
   return Number(Math.max(0, Math.min(1, value)).toFixed(5));
 }
 
-function pathDataFromSvg(svg, char) {
-  const matches = [...svg.matchAll(/<path\b[^>]*\bd="([^"]+)"[^>]*>/g)];
+function strokeDataFromSvg(svg, char) {
+  const matches = [...svg.matchAll(/<path\b([^>]*)>/g)];
   if (!matches.length) throw new Error(`${char}: KanjiVG に画がありません`);
-  return matches.map((match) => match[1]);
+  return matches.map((match) => {
+    const attributes = match[1];
+    const data = /\bd="([^"]+)"/.exec(attributes)?.[1];
+    if (!data) throw new Error(`${char}: path に d 属性がありません`);
+    const type = /\bkvg:type="([^"]+)"/.exec(attributes)?.[1] ?? "";
+    return { data, type, ...classifyStrokeEnding(type) };
+  });
 }
 
 function curriculumEntries() {
@@ -180,38 +188,62 @@ function verifyEntries(entries) {
   if (missingReadings.length || extraReadings.length) {
     throw new Error(`読み辞書が不一致です: 不足=${missingReadings.join("") || "なし"}, 余分=${extraReadings.join("") || "なし"}`);
   }
+  const missingThemes = entries.filter(({ char }) => !Object.hasOwn(KANJI_THEMES, char)).map(({ char }) => char);
+  const extraThemes = Object.keys(KANJI_THEMES).filter((char) => !uniqueChars.has(char));
+  if (missingThemes.length || extraThemes.length || Object.keys(KANJI_THEMES).length !== entries.length) {
+    throw new Error(`テーマ辞書が不一致です: 不足=${missingThemes.join("") || "なし"}, 余分=${extraThemes.join("") || "なし"}`);
+  }
 }
 
 function build() {
   const entries = curriculumEntries();
   verifyEntries(entries);
+  const unknownTypes = new Set();
   const data = entries.map((entry) => {
     const hex = entry.char.codePointAt(0).toString(16).padStart(5, "0");
     const svgPath = path.join(kanjiDirectory, `${hex}.svg`);
     if (!fs.existsSync(svgPath)) throw new Error(`${entry.char}: KanjiVG が見つかりません (${svgPath})`);
     const svg = fs.readFileSync(svgPath, "utf8");
+    const strokes = strokeDataFromSvg(svg, entry.char).map((stroke) => {
+      if (!stroke.known) unknownTypes.add(stroke.type || "(missing)");
+      return {
+        points: sampleStroke(stroke.data),
+        type: stroke.type || null,
+        ending: stroke.ending,
+      };
+    });
     return {
       ...entry,
       ...READINGS[entry.char],
-      strokes: pathDataFromSvg(svg, entry.char).map(sampleStroke),
+      theme: resolveKanjiTheme(entry.char),
+      strokes,
     };
   });
   for (const kanji of data) {
     for (const stroke of kanji.strokes) {
-      if (stroke.length < 16 || stroke.length > 28) {
-        throw new Error(`${kanji.char}: 画の点数が範囲外です (${stroke.length})`);
+      if (stroke.points.length < 16 || stroke.points.length > 28) {
+        throw new Error(`${kanji.char}: 画の点数が範囲外です (${stroke.points.length})`);
       }
-      if (stroke.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value) || value < 0 || value > 1))) {
+      if (stroke.points.some((point) => point.length !== 2 || point.some((value) => !Number.isFinite(value) || value < 0 || value > 1))) {
         throw new Error(`${kanji.char}: 正規化座標が不正です`);
       }
+      if (!["tome", "hane", "harai"].includes(stroke.ending)) throw new Error(`${kanji.char}: ending が不正です`);
     }
+    if (!THEME_CATEGORIES.includes(kanji.theme)) throw new Error(`${kanji.char}: theme が不正です (${kanji.theme})`);
   }
   const header = "// tools/build-kanji-data.mjs により生成。直接編集しないでください。\n";
   fs.writeFileSync(outputPath, `${header}export const KANJI_DATA = ${JSON.stringify(data)};\n`);
   const strokeCount = data.reduce((sum, kanji) => sum + kanji.strokes.length, 0);
+  const endingCounts = Object.fromEntries(["tome", "hane", "harai"].map((ending) => [
+    ending,
+    data.reduce((sum, kanji) => sum + kanji.strokes.filter((stroke) => stroke.ending === ending).length, 0),
+  ]));
   console.log(`PASS curriculum: grade1=80, grade2=71, total=${data.length}`);
   console.log(`PASS readings: ${Object.keys(READINGS).length} entries`);
   console.log(`PASS KanjiVG: ${data.length} kanji, ${strokeCount} strokes`);
+  console.log(`PASS endings: total=${strokeCount}, tome=${endingCounts.tome}, hane=${endingCounts.hane}, harai=${endingCounts.harai}`);
+  console.log(`INFO unknown kvg:type: ${[...unknownTypes].sort().join(", ") || "none"}`);
+  console.log(`PASS themes: ${data.length} kanji, categories=${THEME_CATEGORIES.join(",")}`);
   console.log("PASS sampling: 16..28 points/stroke, coordinates=0..1");
   console.log(`WROTE ${path.relative(projectRoot, outputPath)}`);
 }

@@ -3,6 +3,11 @@ export const BRIDGE_RADIUS = 0.95;
 export const PLAYER_RADIUS = 0.45;
 export const SAMPLE_SPACING = 1.2;
 export const SNAP_DISTANCE = 2.4;
+export const HANE_TERRAIN_LENGTH = 1.5;
+export const HANE_RISE = 0.75;
+export const HARAI_TERRAIN_LENGTH = 3;
+export const HARAI_DROP = 0.5;
+export const HARAI_END_RADIUS = 0.9;
 
 export function worldSizeForStrokeCount(strokeCount) {
   if (strokeCount <= 4) return 64;
@@ -24,13 +29,19 @@ export function pointSegmentDistanceSquared(point, from, to) {
   return distanceSquared(point, { x: from.x + dx * amount, z: from.z + dz * amount });
 }
 
-function closestPointOnSegment(point, from, to) {
+function projectionAmountOnSegment(point, from, to) {
   const dx = to.x - from.x;
   const dz = to.z - from.z;
   const lengthSquared = dx * dx + dz * dz;
-  const amount = lengthSquared === 0
+  return lengthSquared === 0
     ? 0
     : Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
+}
+
+function closestPointOnSegment(point, from, to) {
+  const amount = projectionAmountOnSegment(point, from, to);
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
   return { x: from.x + dx * amount, z: from.z + dz * amount };
 }
 
@@ -88,17 +99,42 @@ class UnionFind {
 }
 
 function buildStrokeGeometry(strokes, worldSize) {
-  const polylines = strokes.map((stroke, strokeId) => ({
-    strokeId,
-    points: stroke.map((point) => normalizedToWorld(point, worldSize)),
-  }));
+  const polylines = strokes.map((stroke, strokeId) => {
+    const sourcePoints = Array.isArray(stroke) ? stroke : stroke.points;
+    return {
+      strokeId,
+      ending: Array.isArray(stroke) ? "tome" : stroke.ending ?? "tome",
+      kvgType: Array.isArray(stroke) ? null : stroke.type ?? null,
+      points: sourcePoints.map((point) => normalizedToWorld(point, worldSize)),
+    };
+  });
   const segments = [];
   for (const polyline of polylines) {
+    const lengths = [];
+    let remaining = 0;
+    for (let index = polyline.points.length - 1; index >= 1; index -= 1) {
+      const length = Math.sqrt(distanceSquared(polyline.points[index - 1], polyline.points[index]));
+      lengths[index - 1] = length;
+      remaining += length;
+    }
+    let distanceFromEnd = remaining;
     for (let index = 1; index < polyline.points.length; index += 1) {
       const from = polyline.points[index - 1];
       const to = polyline.points[index];
       if (distanceSquared(from, to) < 1e-10) continue;
-      segments.push({ from, to, strokeId: polyline.strokeId, type: "stroke", source: "kanji" });
+      const length = lengths[index - 1];
+      segments.push({
+        from,
+        to,
+        length,
+        endDistanceFrom: distanceFromEnd,
+        endDistanceTo: distanceFromEnd - length,
+        ending: polyline.ending,
+        strokeId: polyline.strokeId,
+        type: "stroke",
+        source: "kanji",
+      });
+      distanceFromEnd -= length;
     }
   }
   return { polylines, segments };
@@ -211,7 +247,7 @@ function buildSamples(polylines) {
 }
 
 export function generateMaze(kanji) {
-  if (!kanji?.strokes?.length || kanji.strokes.some((stroke) => stroke.length < 2)) {
+  if (!kanji?.strokes?.length || kanji.strokes.some((stroke) => (Array.isArray(stroke) ? stroke : stroke.points)?.length < 2)) {
     throw new Error("漢字には2点以上からなる画データが必要です");
   }
   const worldSize = worldSizeForStrokeCount(kanji.strokes.length);
@@ -220,6 +256,7 @@ export function generateMaze(kanji) {
   const sampleData = buildSamples(geometry.polylines);
   return {
     char: kanji.char,
+    theme: kanji.theme ?? "neutral",
     worldSize,
     strokeRadius: STROKE_RADIUS,
     bridgeRadius: BRIDGE_RADIUS,
@@ -237,11 +274,86 @@ export function generateMaze(kanji) {
   };
 }
 
+function segmentEndDistanceAt(segment, amount) {
+  if (segment.source !== "kanji") return Infinity;
+  return segment.endDistanceFrom + (segment.endDistanceTo - segment.endDistanceFrom) * amount;
+}
+
+export function segmentPassageRadiusAt(segment, amount) {
+  if (segment.type === "bridge") return BRIDGE_RADIUS;
+  if (segment.source !== "kanji" || segment.ending !== "harai") return STROKE_RADIUS;
+  const endDistance = segmentEndDistanceAt(segment, amount);
+  const progress = Math.max(0, Math.min(1, 1 - endDistance / HARAI_TERRAIN_LENGTH));
+  return STROKE_RADIUS + (HARAI_END_RADIUS - STROKE_RADIUS) * progress;
+}
+
+function closestPassageProfile(maze, x, z) {
+  const point = { x, z };
+  let best = null;
+  const consider = (segment) => {
+    const amount = projectionAmountOnSegment(point, segment.from, segment.to);
+    const closest = {
+      x: segment.from.x + (segment.to.x - segment.from.x) * amount,
+      z: segment.from.z + (segment.to.z - segment.from.z) * amount,
+    };
+    const distanceSquaredToSegment = distanceSquared(point, closest);
+    const endDistance = segmentEndDistanceAt(segment, amount);
+    if (!best
+      || distanceSquaredToSegment < best.distanceSquared - 1e-9
+      || (Math.abs(distanceSquaredToSegment - best.distanceSquared) <= 1e-9 && endDistance < best.endDistance)) {
+      best = { segment, amount, endDistance, distanceSquared: distanceSquaredToSegment };
+    }
+  };
+  for (const segment of maze.strokeSegments) consider(segment);
+  for (const segment of maze.bridgeSegments) consider(segment);
+  return best;
+}
+
+export function passageRadiusAt(maze, x, z) {
+  const profile = closestPassageProfile(maze, x, z);
+  return profile ? segmentPassageRadiusAt(profile.segment, profile.amount) : 0;
+}
+
+export function floorHeightAt(maze, x, z) {
+  const profile = closestPassageProfile(maze, x, z);
+  if (!profile || profile.segment.source !== "kanji") return 0;
+  const radius = segmentPassageRadiusAt(profile.segment, profile.amount);
+  if (profile.distanceSquared > radius ** 2) return 0;
+  if (profile.segment.ending === "hane" && profile.endDistance < HANE_TERRAIN_LENGTH) {
+    return HANE_RISE * (1 - profile.endDistance / HANE_TERRAIN_LENGTH);
+  }
+  if (profile.segment.ending === "harai" && profile.endDistance < HARAI_TERRAIN_LENGTH) {
+    return -HARAI_DROP * (1 - profile.endDistance / HARAI_TERRAIN_LENGTH);
+  }
+  return 0;
+}
+
+export function strokePointAtDistanceFromEnd(maze, strokeId, targetDistance) {
+  const polyline = maze.strokePolylines[strokeId];
+  if (!polyline) return null;
+  let remaining = Math.max(0, targetDistance);
+  for (let index = polyline.points.length - 1; index >= 1; index -= 1) {
+    const from = polyline.points[index - 1];
+    const to = polyline.points[index];
+    const length = Math.sqrt(distanceSquared(from, to));
+    if (remaining <= length || index === 1) {
+      const amountFromEnd = length ? Math.min(1, remaining / length) : 0;
+      return {
+        x: to.x + (from.x - to.x) * amountFromEnd,
+        z: to.z + (from.z - to.z) * amountFromEnd,
+      };
+    }
+    remaining -= length;
+  }
+  return { ...polyline.points[0] };
+}
+
 export function isInsidePassage(maze, x, z, clearance = 0) {
   const point = { x, z };
-  const strokeLimit = Math.max(0, maze.strokeRadius - clearance) ** 2;
   for (const segment of maze.strokeSegments) {
-    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= strokeLimit) return true;
+    const amount = projectionAmountOnSegment(point, segment.from, segment.to);
+    const radius = Math.max(0, segmentPassageRadiusAt(segment, amount) - clearance);
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= radius ** 2) return true;
   }
   const bridgeLimit = Math.max(0, maze.bridgeRadius - clearance) ** 2;
   for (const segment of maze.bridgeSegments) {

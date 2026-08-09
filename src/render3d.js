@@ -1,16 +1,30 @@
 import * as THREE from "../vendor/three.module.js";
-import { pointSegmentDistanceSquared } from "./maze.js";
+import {
+  floorHeightAt,
+  pointSegmentDistanceSquared,
+  segmentPassageRadiusAt,
+} from "./maze.js";
 
 const WALL_HEIGHT = 2.6;
 const EYE_HEIGHT = 1.5;
 const WALL_MARGIN = 4;
 const INK_WIDTH = 1.45;
+const NEUTRAL_BACKGROUND = 0x071127;
+const THEME_STYLE = Object.freeze({
+  neutral: { floor: 0x887d65, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+  water: { floor: 0x74817a, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+  mountain: { floor: 0x887d65, wall: 0x665f59, background: NEUTRAL_BACKGROUND },
+  plant: { floor: 0x7d8067, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+  fire: { floor: 0x887d65, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+  sky: { floor: 0x887d65, wall: 0x46607a, background: 0x09152f },
+  life: { floor: 0x8b7b68, wall: 0x46607a, background: NEUTRAL_BACKGROUND },
+});
 
 export class MazeRenderer {
   constructor(container) {
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x071127);
-    this.scene.fog = new THREE.Fog(0x071127, 25, 105);
+    this.scene.background = new THREE.Color(NEUTRAL_BACKGROUND);
+    this.scene.fog = new THREE.Fog(NEUTRAL_BACKGROUND, 25, 105);
     this.camera = new THREE.PerspectiveCamera(67, 1, 0.08, 320);
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
     this.renderer.setPixelRatio(Math.min(devicePixelRatio, 1.75));
@@ -68,27 +82,32 @@ export class MazeRenderer {
     });
     this.mazeGroup.clear();
     this.wallMesh = null;
+    this.floorMesh = null;
+    this.themeGroup = null;
     this.revealAnimation = null;
   }
 
   buildMaze(maze) {
     this.clearMaze();
     this.maze = maze;
+    const themeStyle = THEME_STYLE[maze.theme] ?? THEME_STYLE.neutral;
+    this.scene.background.setHex(themeStyle.background);
+    this.scene.fog.color.setHex(themeStyle.background);
     // 種明かし中に広げた霧を通常値へ戻す。
     this.scene.fog.near = 25;
     this.scene.fog.far = 105;
     const extent = maze.worldSize / 2 + WALL_MARGIN;
 
     const floor = new THREE.Mesh(
-      new THREE.PlaneGeometry(extent * 2, extent * 2),
-      new THREE.MeshLambertMaterial({ color: 0x887d65 }),
+      terrainFloorGeometry(maze, extent),
+      new THREE.MeshLambertMaterial({ color: themeStyle.floor }),
     );
     floor.rotation.x = -Math.PI / 2;
-    floor.position.y = -0.02;
+    this.floorMesh = floor;
     this.mazeGroup.add(floor);
 
     const wallGeometry = createWallGeometry(maze);
-    const wallMaterial = new THREE.MeshLambertMaterial({ color: 0x46607a, transparent: true, opacity: 1 });
+    const wallMaterial = new THREE.MeshLambertMaterial({ color: themeStyle.wall, transparent: true, opacity: 1 });
     this.wallMesh = new THREE.Mesh(wallGeometry, wallMaterial);
     this.mazeGroup.add(this.wallMesh);
 
@@ -99,6 +118,98 @@ export class MazeRenderer {
       );
       this.mazeGroup.add(bridgeFloor);
       this.addBridgeRails();
+    }
+    this.addHaneLips();
+    this.addThemeDetails(maze.theme);
+  }
+
+  addHaneLips() {
+    const haneStrokes = this.maze.strokePolylines.filter((stroke) => stroke.ending === "hane");
+    if (!haneStrokes.length) return;
+    const geometry = new THREE.BoxGeometry(1, 1, 1);
+    const material = new THREE.MeshLambertMaterial({ color: 0x3d5369 });
+    const lips = new THREE.InstancedMesh(geometry, material, haneStrokes.length);
+    const matrix = new THREE.Matrix4();
+    const position = new THREE.Vector3();
+    const quaternion = new THREE.Quaternion();
+    const scale = new THREE.Vector3();
+    const up = new THREE.Vector3(0, 1, 0);
+    for (let index = 0; index < haneStrokes.length; index += 1) {
+      const points = haneStrokes[index].points;
+      const end = points.at(-1);
+      const before = points.at(-2);
+      const dx = end.x - before.x;
+      const dz = end.z - before.z;
+      const length = Math.hypot(dx, dz) || 1;
+      const crossX = -dz / length;
+      const crossZ = dx / length;
+      quaternion.setFromAxisAngle(up, Math.atan2(-crossZ, crossX));
+      const height = floorHeightAt(this.maze, end.x, end.z);
+      position.set(end.x - dx / length * 0.1, height + 0.14, end.z - dz / length * 0.1);
+      scale.set(this.maze.strokeRadius * 1.75, 0.28, 0.22);
+      matrix.compose(position, quaternion, scale);
+      lips.setMatrixAt(index, matrix);
+    }
+    lips.instanceMatrix.needsUpdate = true;
+    this.mazeGroup.add(lips);
+  }
+
+  addThemeDetails(theme) {
+    this.themeGroup = new THREE.Group();
+    this.mazeGroup.add(this.themeGroup);
+    const random = seededRandom((this.maze.char?.codePointAt(0) ?? 1) * 97);
+    if (theme === "water") {
+      const stream = new THREE.Mesh(
+        terrainRibbonGeometry(this.maze.sampleLinks, 0.07, this.maze, 0.025),
+        new THREE.MeshBasicMaterial({ color: 0x8fcbd0, transparent: true, opacity: 0.28, depthWrite: false }),
+      );
+      this.themeGroup.add(stream);
+    }
+    if (theme === "mountain") {
+      const count = Math.min(7, Math.max(3, Math.floor(this.maze.samples.length / 190)));
+      const rocks = new THREE.InstancedMesh(
+        new THREE.DodecahedronGeometry(0.45, 0),
+        new THREE.MeshLambertMaterial({ color: 0x706960 }),
+        count,
+      );
+      addScatteredInstances(rocks, this.maze, count, random, 0.7, [0.45, 0.75]);
+      this.themeGroup.add(rocks);
+    }
+    if (theme === "plant") {
+      const tuftCount = Math.min(10, Math.max(4, Math.floor(this.maze.samples.length / 140)));
+      const grass = new THREE.InstancedMesh(
+        new THREE.PlaneGeometry(0.18, 0.42),
+        new THREE.MeshLambertMaterial({ color: 0x667c50, side: THREE.DoubleSide }),
+        tuftCount * 2,
+      );
+      addGrassInstances(grass, this.maze, tuftCount, random);
+      this.themeGroup.add(grass);
+    }
+    if (theme === "fire") {
+      const anchors = themeSamples(this.maze, 2);
+      for (const [index, sample] of anchors.entries()) {
+        const light = new THREE.PointLight(0xf08a52, 0.65, 9, 2);
+        light.position.set(sample.x, floorHeightAt(this.maze, sample.x, sample.z) + 1.15, sample.z);
+        this.themeGroup.add(light);
+        const spot = new THREE.Mesh(
+          new THREE.CircleGeometry(0.65 + index * 0.12, 10),
+          new THREE.MeshBasicMaterial({ color: 0x443d39, transparent: true, opacity: 0.32, depthWrite: false }),
+        );
+        spot.rotation.x = -Math.PI / 2;
+        spot.position.set(sample.x, floorHeightAt(this.maze, sample.x, sample.z) + 0.02, sample.z);
+        this.themeGroup.add(spot);
+      }
+    }
+    if (theme === "sky") {
+      const positions = [];
+      for (let index = 0; index < 28; index += 1) {
+        const angle = random() * Math.PI * 2;
+        const radius = 76 + random() * 34;
+        positions.push(Math.cos(angle) * radius, 22 + random() * 54, Math.sin(angle) * radius);
+      }
+      const geometry = new THREE.BufferGeometry();
+      geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+      this.themeGroup.add(new THREE.Points(geometry, new THREE.PointsMaterial({ color: 0xd8e1ff, size: 0.27 })));
     }
   }
 
@@ -137,7 +248,7 @@ export class MazeRenderer {
 
   setFirstPerson(x, z, yaw, pitch) {
     this.camera.up.set(0, 1, 0);
-    this.camera.position.set(x, EYE_HEIGHT, z);
+    this.camera.position.set(x, EYE_HEIGHT + floorHeightAt(this.maze, x, z), z);
     this.camera.rotation.set(pitch, yaw, 0, "YXZ");
   }
 
@@ -159,6 +270,11 @@ export class MazeRenderer {
   }
 
   startReveal(visited, onComplete) {
+    if (this.themeGroup) this.themeGroup.visible = false;
+    this.scene.background.setHex(NEUTRAL_BACKGROUND);
+    this.scene.fog.color.setHex(NEUTRAL_BACKGROUND);
+    this.floorMesh?.material.color.setHex(THEME_STYLE.neutral.floor);
+    this.wallMesh?.material.color.setHex(THEME_STYLE.neutral.wall);
     this.addInk(visited);
     const startPosition = this.camera.position.clone();
     const startQuaternion = this.camera.quaternion.clone();
@@ -318,7 +434,9 @@ class PassageIndex {
   contains(x, z) {
     const entries = this.buckets.get(this.key(Math.floor(x / this.bucketSize), Math.floor(z / this.bucketSize))) ?? [];
     for (const entry of entries) {
-      if (pointSegmentDistanceSquared({ x, z }, entry.segment.from, entry.segment.to) <= entry.radius ** 2) return true;
+      const amount = segmentProjectionAmount({ x, z }, entry.segment.from, entry.segment.to);
+      const radius = entry.segment.type === "bridge" ? entry.radius : segmentPassageRadiusAt(entry.segment, amount);
+      if (pointSegmentDistanceSquared({ x, z }, entry.segment.from, entry.segment.to) <= radius ** 2) return true;
     }
     return false;
   }
@@ -562,6 +680,108 @@ function contourRecordToThreePath(record) {
   for (let index = 1; index < points.length; index += 1) path.lineTo(points[index].x, points[index].y);
   path.closePath();
   return path;
+}
+
+function terrainFloorGeometry(maze, extent) {
+  const divisions = maze.worldSize <= 80 ? 112 : 128;
+  const geometry = new THREE.PlaneGeometry(extent * 2, extent * 2, divisions, divisions);
+  const positions = geometry.attributes.position;
+  for (let index = 0; index < positions.count; index += 1) {
+    const x = positions.getX(index);
+    const z = -positions.getY(index);
+    positions.setZ(index, floorHeightAt(maze, x, z) - 0.02);
+  }
+  positions.needsUpdate = true;
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function terrainRibbonGeometry(segments, halfWidth, maze, verticalOffset = 0) {
+  const positions = [];
+  const addTriangle = (a, b, c) => positions.push(
+    a.x, a.y, a.z,
+    b.x, b.y, b.z,
+    c.x, c.y, c.z,
+  );
+  for (const segment of segments) {
+    const dx = segment.to.x - segment.from.x;
+    const dz = segment.to.z - segment.from.z;
+    const length = Math.hypot(dx, dz);
+    if (!length) continue;
+    const nx = -dz / length * halfWidth;
+    const nz = dx / length * halfWidth;
+    const fromY = floorHeightAt(maze, segment.from.x, segment.from.z) + verticalOffset;
+    const toY = floorHeightAt(maze, segment.to.x, segment.to.z) + verticalOffset;
+    const a = { x: segment.from.x + nx, y: fromY, z: segment.from.z + nz };
+    const b = { x: segment.to.x + nx, y: toY, z: segment.to.z + nz };
+    const c = { x: segment.to.x - nx, y: toY, z: segment.to.z - nz };
+    const d = { x: segment.from.x - nx, y: fromY, z: segment.from.z - nz };
+    addTriangle(a, b, d);
+    addTriangle(b, c, d);
+  }
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.computeVertexNormals();
+  return geometry;
+}
+
+function themeSamples(maze, count) {
+  if (!maze.samples.length || count <= 0) return [];
+  return Array.from({ length: count }, (_, index) => (
+    maze.samples[Math.min(maze.samples.length - 1, Math.floor((index + 1) * maze.samples.length / (count + 1)))]
+  ));
+}
+
+function addScatteredInstances(instances, maze, count, random, offset, scaleRange) {
+  const matrix = new THREE.Matrix4();
+  const quaternion = new THREE.Quaternion();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3();
+  const anchors = themeSamples(maze, count);
+  for (let index = 0; index < anchors.length; index += 1) {
+    const sample = anchors[index];
+    const angle = random() * Math.PI * 2;
+    const size = scaleRange[0] + random() * (scaleRange[1] - scaleRange[0]);
+    const x = sample.x + Math.cos(angle) * offset;
+    const z = sample.z + Math.sin(angle) * offset;
+    position.set(x, floorHeightAt(maze, x, z) + size * 0.34, z);
+    quaternion.setFromAxisAngle(new THREE.Vector3(0, 1, 0), random() * Math.PI);
+    scale.set(size, size * (0.65 + random() * 0.4), size);
+    matrix.compose(position, quaternion, scale);
+    instances.setMatrixAt(index, matrix);
+  }
+  instances.instanceMatrix.needsUpdate = true;
+}
+
+function addGrassInstances(instances, maze, tuftCount, random) {
+  const matrix = new THREE.Matrix4();
+  const quaternion = new THREE.Quaternion();
+  const position = new THREE.Vector3();
+  const scale = new THREE.Vector3(0.8, 0.8, 0.8);
+  const up = new THREE.Vector3(0, 1, 0);
+  const anchors = themeSamples(maze, tuftCount);
+  for (let index = 0; index < anchors.length; index += 1) {
+    const sample = anchors[index];
+    const offsetAngle = random() * Math.PI * 2;
+    const x = sample.x + Math.cos(offsetAngle) * 0.68;
+    const z = sample.z + Math.sin(offsetAngle) * 0.68;
+    const y = floorHeightAt(maze, x, z) + 0.2;
+    for (let cross = 0; cross < 2; cross += 1) {
+      position.set(x, y, z);
+      quaternion.setFromAxisAngle(up, offsetAngle + cross * Math.PI / 2);
+      matrix.compose(position, quaternion, scale);
+      instances.setMatrixAt(index * 2 + cross, matrix);
+    }
+  }
+  instances.instanceMatrix.needsUpdate = true;
+}
+
+function segmentProjectionAmount(point, from, to) {
+  const dx = to.x - from.x;
+  const dz = to.z - from.z;
+  const lengthSquared = dx * dx + dz * dz;
+  if (!lengthSquared) return 0;
+  return Math.max(0, Math.min(1, ((point.x - from.x) * dx + (point.z - from.z) * dz) / lengthSquared));
 }
 
 function ribbonGeometry(segments, halfWidth, height, roundCaps) {
