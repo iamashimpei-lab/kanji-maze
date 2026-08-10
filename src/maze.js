@@ -9,6 +9,11 @@ export const HARAI_TERRAIN_LENGTH = 3;
 export const HARAI_DROP = 0.5;
 export const HARAI_END_RADIUS = 0.9;
 
+const PLAYER_SAMPLE_COUNT = 8;
+const INNER_CORNER_TOLERANCE = 0.05;
+const MAX_MOVE_STEP = 0.15;
+const RECOVERY_STEP = 0.3;
+
 export function rotateStrokes(strokes, angleDegrees) {
   const radians = angleDegrees * Math.PI / 180;
   const sin = Math.sin(radians);
@@ -314,12 +319,13 @@ function closestPassageProfile(maze, x, z) {
       x: segment.from.x + (segment.to.x - segment.from.x) * amount,
       z: segment.from.z + (segment.to.z - segment.from.z) * amount,
     };
+    if (maze.collisionMetrics) maze.collisionMetrics.distanceChecks += 1;
     const distanceSquaredToSegment = distanceSquared(point, closest);
     const endDistance = segmentEndDistanceAt(segment, amount);
     if (!best
       || distanceSquaredToSegment < best.distanceSquared - 1e-9
       || (Math.abs(distanceSquaredToSegment - best.distanceSquared) <= 1e-9 && endDistance < best.endDistance)) {
-      best = { segment, amount, endDistance, distanceSquared: distanceSquaredToSegment };
+      best = { segment, amount, endDistance, distanceSquared: distanceSquaredToSegment, closest };
     }
   };
   for (const segment of maze.strokeSegments) consider(segment);
@@ -367,21 +373,157 @@ export function strokePointAtDistanceFromEnd(maze, strokeId, targetDistance) {
 }
 
 export function isInsidePassage(maze, x, z, clearance = 0) {
+  return Boolean(passageSegmentAt(maze, x, z, clearance));
+}
+
+function passageSegmentAt(maze, x, z, clearance = 0) {
   const point = { x, z };
   for (const segment of maze.strokeSegments) {
+    const broadRadius = Math.max(0, maze.strokeRadius - clearance);
+    if (x < Math.min(segment.from.x, segment.to.x) - broadRadius - 1e-9
+      || x > Math.max(segment.from.x, segment.to.x) + broadRadius + 1e-9
+      || z < Math.min(segment.from.z, segment.to.z) - broadRadius - 1e-9
+      || z > Math.max(segment.from.z, segment.to.z) + broadRadius + 1e-9) continue;
     const amount = projectionAmountOnSegment(point, segment.from, segment.to);
     const radius = Math.max(0, segmentPassageRadiusAt(segment, amount) - clearance);
-    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= radius ** 2) return true;
+    if (maze.collisionMetrics) maze.collisionMetrics.distanceChecks += 1;
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= radius ** 2 + 1e-9) return segment;
   }
-  const bridgeLimit = Math.max(0, maze.bridgeRadius - clearance) ** 2;
+  const bridgeRadius = Math.max(0, maze.bridgeRadius - clearance);
+  const bridgeLimit = bridgeRadius ** 2;
   for (const segment of maze.bridgeSegments) {
-    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= bridgeLimit) return true;
+    if (x < Math.min(segment.from.x, segment.to.x) - bridgeRadius - 1e-9
+      || x > Math.max(segment.from.x, segment.to.x) + bridgeRadius + 1e-9
+      || z < Math.min(segment.from.z, segment.to.z) - bridgeRadius - 1e-9
+      || z > Math.max(segment.from.z, segment.to.z) + bridgeRadius + 1e-9) continue;
+    if (maze.collisionMetrics) maze.collisionMetrics.distanceChecks += 1;
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= bridgeLimit + 1e-9) return segment;
+  }
+  return null;
+}
+
+function segmentsFormCorner(first, second) {
+  const firstX = first.to.x - first.from.x;
+  const firstZ = first.to.z - first.from.z;
+  const secondX = second.to.x - second.from.x;
+  const secondZ = second.to.z - second.from.z;
+  const lengths = Math.hypot(firstX, firstZ) * Math.hypot(secondX, secondZ);
+  return lengths > 1e-9 && Math.abs(firstX * secondZ - firstZ * secondX) > lengths * 0.1;
+}
+
+function hasNearbyCornerSegment(maze, centerSegment, x, z, sampleRadius) {
+  const point = { x, z };
+  const candidates = [...maze.strokeSegments, ...maze.bridgeSegments];
+  for (const segment of candidates) {
+    if (segment === centerSegment || !segmentsFormCorner(centerSegment, segment)) continue;
+    const broadRadius = (segment.type === "bridge" ? maze.bridgeRadius : maze.strokeRadius) + sampleRadius;
+    if (x < Math.min(segment.from.x, segment.to.x) - broadRadius
+      || x > Math.max(segment.from.x, segment.to.x) + broadRadius
+      || z < Math.min(segment.from.z, segment.to.z) - broadRadius
+      || z > Math.max(segment.from.z, segment.to.z) + broadRadius) continue;
+    const amount = projectionAmountOnSegment(point, segment.from, segment.to);
+    const radius = segmentPassageRadiusAt(segment, amount) + sampleRadius;
+    if (maze.collisionMetrics) maze.collisionMetrics.distanceChecks += 1;
+    if (pointSegmentDistanceSquared(point, segment.from, segment.to) <= radius ** 2 + 1e-9) return true;
   }
   return false;
 }
 
 export function canStandAt(maze, x, z) {
-  return isInsidePassage(maze, x, z, PLAYER_RADIUS);
+  // 通路が一本だけの場所は従来どおり厳密な clearance 判定を使う。
+  if (isInsidePassage(maze, x, z, PLAYER_RADIUS)) return true;
+
+  // 画の継ぎ目では、床の和集合でプレイヤー円を近似する。わずかな数値・操作上の
+  // 余裕は継ぎ目だけに限定し、一本の画や橋そのものの有効幅は広げない。
+  const sampleRadius = PLAYER_RADIUS - INNER_CORNER_TOLERANCE;
+  const coveringSegments = new Set();
+  const centerSegment = passageSegmentAt(maze, x, z);
+  if (!centerSegment) return false;
+  if (!hasNearbyCornerSegment(maze, centerSegment, x, z, sampleRadius)) return false;
+  coveringSegments.add(centerSegment);
+  for (let index = 0; index < PLAYER_SAMPLE_COUNT; index += 1) {
+    const angle = index * Math.PI * 2 / PLAYER_SAMPLE_COUNT;
+    const segment = passageSegmentAt(
+      maze,
+      x + Math.cos(angle) * sampleRadius,
+      z + Math.sin(angle) * sampleRadius,
+    );
+    if (!segment) return false;
+    coveringSegments.add(segment);
+  }
+  const segments = [...coveringSegments];
+  for (let first = 0; first < segments.length; first += 1) {
+    for (let second = first + 1; second < segments.length; second += 1) {
+      if (segmentsFormCorner(segments[first], segments[second])) return true;
+    }
+  }
+  return false;
+}
+
+function recoverInsidePassage(maze, x, z) {
+  const profile = closestPassageProfile(maze, x, z);
+  if (!profile) return { x, z };
+  const dx = profile.closest.x - x;
+  const dz = profile.closest.z - z;
+  const distance = Math.hypot(dx, dz);
+  if (distance < 1e-9) return { x, z };
+  const scale = Math.min(1, RECOVERY_STEP / distance);
+  return { x: x + dx * scale, z: z + dz * scale };
+}
+
+function attemptMoveStep(maze, x, z, dx, dz) {
+  if (canStandAt(maze, x + dx, z + dz)) return { x: x + dx, z: z + dz };
+
+  const targetX = x + dx;
+  const targetZ = z + dz;
+  const nearbySegment = passageSegmentAt(maze, targetX, targetZ);
+  let profile = null;
+  if (nearbySegment) {
+    const amount = projectionAmountOnSegment({ x: targetX, z: targetZ }, nearbySegment.from, nearbySegment.to);
+    profile = { segment: nearbySegment, amount };
+  } else {
+    profile = closestPassageProfile(maze, targetX, targetZ);
+  }
+  if (profile) {
+    const tangentX = profile.segment.to.x - profile.segment.from.x;
+    const tangentZ = profile.segment.to.z - profile.segment.from.z;
+    const length = Math.hypot(tangentX, tangentZ);
+    if (length > 1e-9) {
+      const unitX = tangentX / length;
+      const unitZ = tangentZ / length;
+      const amount = dx * unitX + dz * unitZ;
+      const slideX = unitX * amount;
+      const slideZ = unitZ * amount;
+      if (Math.hypot(slideX, slideZ) > 1e-9 && canStandAt(maze, x + slideX, z + slideZ)) {
+        return { x: x + slideX, z: z + slideZ };
+      }
+    }
+  }
+
+  let fallbackX = x;
+  let fallbackZ = z;
+  if (canStandAt(maze, fallbackX + dx, fallbackZ)) fallbackX += dx;
+  if (canStandAt(maze, fallbackX, fallbackZ + dz)) fallbackZ += dz;
+  if (fallbackX !== x || fallbackZ !== z) return { x: fallbackX, z: fallbackZ };
+
+  if (canStandAt(maze, x + dx * 0.5, z + dz * 0.5)) {
+    return { x: x + dx * 0.5, z: z + dz * 0.5 };
+  }
+  return { x, z };
+}
+
+export function resolvePlayerMovement(maze, x, z, dx, dz) {
+  if (!canStandAt(maze, x, z)) return recoverInsidePassage(maze, x, z);
+  const distance = Math.hypot(dx, dz);
+  if (distance < 1e-9) return { x, z };
+  const stepCount = Math.max(1, Math.ceil(distance / MAX_MOVE_STEP));
+  const stepX = dx / stepCount;
+  const stepZ = dz / stepCount;
+  let next = { x, z };
+  for (let step = 0; step < stepCount; step += 1) {
+    next = attemptMoveStep(maze, next.x, next.z, stepX, stepZ);
+  }
+  return next;
 }
 
 export function markVisitedSamples(maze, visited, x, z) {

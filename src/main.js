@@ -1,6 +1,6 @@
 import { getKanjiPool } from "./kanji-data.js";
 import { selectAnswerChoices } from "./answers.js";
-import { canStandAt, explorationRate, generateMaze, markVisitedSamples, rotateStrokes } from "./maze.js";
+import { explorationRate, generateMaze, markVisitedSamples, resolvePlayerMovement, rotateStrokes } from "./maze.js";
 import { villageAdditionForTheme } from "./progress.js";
 import { calculateScore, getScoreBreakdown } from "./score.js";
 import { Controls } from "./controls.js";
@@ -201,8 +201,9 @@ function updatePlayer(delta) {
     dx = (-Math.sin(player.yaw) * forward + Math.cos(player.yaw) * strafe) * MOVE_SPEED * delta;
     dz = (-Math.cos(player.yaw) * forward - Math.sin(player.yaw) * strafe) * MOVE_SPEED * delta;
   }
-  if (canStandAt(maze, player.x + dx, player.z)) player.x += dx;
-  if (canStandAt(maze, player.x, player.z + dz)) player.z += dz;
+  const nextPosition = resolvePlayerMovement(maze, player.x, player.z, dx, dz);
+  player.x = nextPosition.x;
+  player.z = nextPosition.z;
   view.setFirstPerson(player.x, player.z, player.yaw, player.pitch);
 
   if (markVisitedSamples(maze, visited, player.x, player.z)) {
